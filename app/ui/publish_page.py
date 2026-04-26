@@ -263,12 +263,10 @@ class PublishPage(QWidget):
         self.settings = None 
         self.drop_slots = []
         
-        # Resizable columns with QSplitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setHandleWidth(10)
         
-        # Left Panel
         self.left_panel = QFrame()
         self.left_panel.setObjectName("PublishPanel")
         self.left_layout = QVBoxLayout(self.left_panel)
@@ -284,7 +282,6 @@ class PublishPage(QWidget):
         self.left_layout.addLayout(self.slots_container_layout)
         self.left_layout.addStretch()
         
-        # Mid Panel
         self.mid_panel = QFrame()
         self.mid_panel.setObjectName("PublishPanel")
         self.mid_layout = QVBoxLayout(self.mid_panel)
@@ -299,14 +296,12 @@ class PublishPage(QWidget):
         self.mid_layout.addWidget(self.outliner_label)
         self.mid_layout.addWidget(self.outliner)
         
-        # Material Control Bar
         self.create_mtl_btn = QPushButton("Create New Material")
         self.create_mtl_btn.setObjectName("PublishButton")
         self.create_mtl_btn.setMinimumHeight(40)
         self.create_mtl_btn.clicked.connect(self.create_material)
         self.mid_layout.addWidget(self.create_mtl_btn)
         
-        # Right Panel
         self.right_panel = QFrame()
         self.right_panel.setObjectName("PublishPanel")
         self.right_layout = QVBoxLayout(self.right_panel)
@@ -318,12 +313,10 @@ class PublishPage(QWidget):
         self.right_layout.addWidget(self.prop_label)
         self.right_layout.addWidget(self.prop_editor)
 
-        # Assemble Splitter
         self.splitter.addWidget(self.left_panel)
         self.splitter.addWidget(self.mid_panel)
         self.splitter.addWidget(self.right_panel)
         self.splitter.setSizes([300, 400, 300])
-        
         self.main_layout.addWidget(self.splitter)
         
         self.publish_btn = QPushButton("Publish Asset")
@@ -363,7 +356,7 @@ class PublishPage(QWidget):
                                 shd_in = shader.CreateInput(input_name, sdf_type)
                                 shd_in.ConnectToSource(mtl_in)
                     except Exception as e:
-                        print(f"DEBUG: Sdr discovery failed (likely missing plugins): {e}")
+                        print(f"DEBUG: Sdr discovery failed: {e}")
         self.refresh_outliner()
 
     def _on_selection_changed(self):
@@ -409,24 +402,22 @@ class PublishPage(QWidget):
         rot_values = obj_settings["rotation"]
         scale_mult = obj_settings["scale"]
         
-        rot_matrix = Gf.Matrix4d(1).SetRotate(
-            Gf.Rotation(Gf.Vec3d(1,0,0), rot_values[0]) *
-            Gf.Rotation(Gf.Vec3d(0,1,0), rot_values[1]) *
-            Gf.Rotation(Gf.Vec3d(0,0,1), rot_values[2])
-        )
-        rot_matrix.SetScale(Gf.Vec3d(scale_mult, scale_mult, scale_mult))
+        # COMPOSE TRANSFORMATION MATRIX CORRECTLY
+        total_mat = Gf.Matrix4d(1.0)
+        total_mat *= Gf.Matrix4d().SetScale(Gf.Vec3d(scale_mult, scale_mult, scale_mult))
+        total_mat *= Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1,0,0), rot_values[0]))
+        total_mat *= Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(0,1,0), rot_values[1]))
+        total_mat *= Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(0,0,1), rot_values[2]))
 
         try:
             with open(file_path, 'r') as f:
                 for line in f:
                     line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                    
+                    if not line or line.startswith('#'): continue
                     parts = line.split()
                     if parts[0] == 'v':
                         p = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
-                        p_transformed = rot_matrix.Transform(p)
+                        p_transformed = total_mat.Transform(p)
                         vertices.append(Gf.Vec3f(p_transformed))
                     elif parts[0] == 'f':
                         face_v_indices = []
@@ -438,46 +429,34 @@ class PublishPage(QWidget):
             
             temp_stage = Usd.Stage.CreateInMemory()
             UsdGeom.Xform.Define(temp_stage, "/main")
-
             if self.settings:
-                up_axis = self.settings.get_up_axis()
-                meters = self.settings.get_meters_per_unit()
-                UsdGeom.SetStageUpAxis(temp_stage, up_axis)
-                UsdGeom.SetStageMetersPerUnit(temp_stage, meters)
+                UsdGeom.SetStageUpAxis(temp_stage, self.settings.get_up_axis())
+                UsdGeom.SetStageMetersPerUnit(temp_stage, self.settings.get_meters_per_unit())
 
             mesh = UsdGeom.Mesh.Define(temp_stage, "/main/mesh")
             mesh.CreatePointsAttr(vertices)
             mesh.CreateFaceVertexIndicesAttr(face_indices)
             mesh.CreateFaceVertexCountsAttr(face_counts)
-            
             temp_stage.SetDefaultPrim(temp_stage.GetPrimAtPath("/main"))
             return UsdUtils.FlattenLayerStack(temp_stage)
-            
         except Exception as e:
-            print(f"DEBUG: OBJ Parser failed: {e}")
             raise e
 
     def on_file_dropped(self, file_path):
         slot = self.sender()
         if not slot: return
-        
         is_obj = file_path.lower().endswith(".obj")
-        
         try:
             if is_obj:
-                print(f"DEBUG: Parsing OBJ file: {file_path}")
                 source_layer = self._parse_obj(file_path)
-                
-                # Handle Preview after Import
                 if self.settings and source_layer:
                     obj_settings = self.settings.get_obj_import_settings()
                     if obj_settings.get("preview", True):
-                        temp_preview_path = os.path.join(os.environ.get("TEMP", os.getcwd()), "obj_import_preview.usda")
+                        temp_preview_path = os.path.join(os.environ.get("TEMP", os.getcwd()), "obj_preview.usda")
                         source_layer.Export(temp_preview_path)
                         import subprocess
                         subprocess.Popen(f'usdview "{temp_preview_path}"', shell=True)
             else:
-                print(f"DEBUG: Opening USD file: {file_path}")
                 source_layer = UsdUtils.FlattenLayerStack(Usd.Stage.Open(file_path))
         except Exception as e:
             import traceback; traceback.print_exc()
@@ -485,7 +464,6 @@ class PublishPage(QWidget):
             return
 
         if not source_layer: return
-        
         if slot.slot_type == "payload":
             payload_layer = self.slot_payload_layers.get(slot.slot_name)
             if payload_layer:
@@ -498,28 +476,21 @@ class PublishPage(QWidget):
                 with Sdf.ChangeBlock():
                     index_layer.Clear()
                     index_layer.TransferContent(source_layer)
-        
         self.refresh_outliner()
 
     def _create_new_stage(self):
         self.stage = Usd.Stage.CreateInMemory()
         UsdGeom.Xform.Define(self.stage, "/main")
         self.stage.SetDefaultPrim(self.stage.GetPrimAtPath("/main"))
-        
         if self.settings:
-            up_axis = self.settings.get_up_axis()
-            meters = self.settings.get_meters_per_unit()
-            UsdGeom.SetStageUpAxis(self.stage, up_axis)
-            UsdGeom.SetStageMetersPerUnit(self.stage, meters)
-
+            UsdGeom.SetStageUpAxis(self.stage, self.settings.get_up_axis())
+            UsdGeom.SetStageMetersPerUnit(self.stage, self.settings.get_meters_per_unit())
         self.slot_index_layers = {}
         self.slot_payload_layers = {}
-
         for slot in self.drop_slots:
             index_layer = Sdf.Layer.CreateAnonymous(f"{slot.slot_name}/index.usda")
             self.slot_index_layers[slot.slot_name] = index_layer
             self.stage.GetRootLayer().subLayerPaths.append(index_layer.identifier)
-
             if slot.slot_type == "payload":
                 payload_layer = Sdf.Layer.CreateAnonymous(f"{slot.slot_name}/payload.usd")
                 self.slot_payload_layers[slot.slot_name] = payload_layer
@@ -528,7 +499,6 @@ class PublishPage(QWidget):
                 with Usd.EditContext(self.stage, index_layer):
                     scope_prim = self.stage.DefinePrim(f"/main/{slot.slot_name}", "Scope")
                     scope_prim.GetPayloads().AddPayload(Sdf.Payload(payload_layer.identifier, "/main"))
-
         self.refresh_outliner()
 
     def bind_material(self, mat_path, target_path):
@@ -537,40 +507,29 @@ class PublishPage(QWidget):
                 index_layer = self.slot_index_layers.get(slot.slot_name)
                 author_stage = Usd.Stage.Open(index_layer)
                 target_prim = author_stage.OverridePrim(target_path)
-                binding_api = UsdShade.MaterialBindingAPI.Apply(target_prim)
-                material = UsdShade.Material(self.stage.GetPrimAtPath(mat_path))
-                binding_api.Bind(material)
+                UsdShade.MaterialBindingAPI.Apply(target_prim).Bind(UsdShade.Material(self.stage.GetPrimAtPath(mat_path)))
         self.refresh_outliner()
 
     def refresh_outliner(self):
         self.outliner.blockSignals(True)
         self.outliner.clear()
         if self.stage:
+            self.stage.Reload()
             main_prim = self.stage.GetPrimAtPath("/main")
-            if main_prim:
-                self._add_prim_to_tree(main_prim, self.outliner)
+            if main_prim: self._add_prim_to_tree(main_prim, self.outliner)
         self.outliner.blockSignals(False)
 
     def _add_prim_to_tree(self, prim, parent_item):
         name, type_name = prim.GetName(), prim.GetTypeName()
         display_name = f"{name} ({type_name})"
-        for slot in self.drop_slots:
-            if slot.slot_name == "Bindings":
-                index_layer = self.slot_index_layers.get(slot.slot_name)
-                if index_layer and index_layer.GetPrimAtPath(prim.GetPath()):
-                    display_name += " [BOUND]"
-        
         item = QTreeWidgetItem(parent_item, [display_name])
         item.setData(0, Qt.ItemDataRole.UserRole, str(prim.GetPath()))
         item.setData(0, Qt.ItemDataRole.UserRole + 1, str(type_name))
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-        if "[BOUND]" in display_name: item.setForeground(0, QColor("#0099ff"))
         if type_name == "Material": item.setForeground(0, QColor("#00ff99"))
         item.setExpanded(True)
-
         for child in prim.GetChildren():
-            if not child.IsValid(): continue
-            self._add_prim_to_tree(child, item)
+            if child.IsValid(): self._add_prim_to_tree(child, item)
 
     def on_publish(self):
         name = self.name_input.text().strip()
@@ -586,15 +545,22 @@ class PublishPage(QWidget):
                 clean_name = slot.slot_name.lower().replace(" ", "_")
                 slot_dir = os.path.join(asset_dir, clean_name)
                 os.makedirs(slot_dir, exist_ok=True)
-
                 if slot.slot_type == "payload":
                     payload_layer = self.slot_payload_layers.get(slot.slot_name)
                     payload_filename = "payload.usd"
-                    payload_layer.Export(os.path.join(slot_dir, payload_filename))
-                    scope_prim = index_layer.GetPrimAtPath(f"/main/{slot.slot_name}")
-                    scope_prim.payloadList.prependedItems = [Sdf.Payload(payload_filename, "/main")]
-                index_layer.Export(os.path.join(slot_dir, "index.usda"))
-
+                    Usd.Stage.Open(payload_layer).Flatten().Export(os.path.join(slot_dir, payload_filename))
+                    comp_stage = Usd.Stage.CreateNew(os.path.join(asset_dir, f"{clean_name}/index.usda"))
+                    comp_main = comp_stage.DefinePrim("/main")
+                    comp_stage.SetDefaultPrim(comp_main)
+                    scope = comp_stage.DefinePrim(f"/main/{slot.slot_name}", "Scope")
+                    scope.GetPayloads().AddPayload(Sdf.Payload(payload_filename, "/main"))
+                    author_stage = Usd.Stage.Open(index_layer)
+                    for prim in author_stage.Traverse():
+                        if prim.IsA(UsdShade.Material) or prim.IsA(UsdShade.Shader):
+                            Sdf.CopySpec(index_layer, prim.GetPath(), comp_stage.GetRootLayer(), prim.GetPath())
+                    comp_stage.Save()
+                else:
+                    index_layer.Export(os.path.join(asset_dir, f"{clean_name}/index.usda"))
                 final_sublayers.append(f"{clean_name}/index.usda")
             root_stage = Usd.Stage.CreateNew(os.path.join(asset_dir, "index.usda"))
             root_main = root_stage.DefinePrim("/main")
