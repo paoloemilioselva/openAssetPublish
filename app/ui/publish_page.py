@@ -437,6 +437,17 @@ class PublishPage(QWidget):
             mesh.CreatePointsAttr(vertices)
             mesh.CreateFaceVertexIndicesAttr(face_indices)
             mesh.CreateFaceVertexCountsAttr(face_counts)
+
+            # Apply Subdivision Settings
+            subdiv_scheme = "catmullClark"
+            if self.settings:
+                obj_settings = self.settings.get_obj_import_settings()
+                if not obj_settings.get("subdivision", False):
+                    subdiv_scheme = "none"
+
+            mesh.CreateSubdivisionSchemeAttr(subdiv_scheme)
+            print(f"DEBUG: OBJ Mesh Subdivision Scheme: {subdiv_scheme}")
+
             temp_stage.SetDefaultPrim(temp_stage.GetPrimAtPath("/main"))
             return UsdUtils.FlattenLayerStack(temp_stage)
         except Exception as e:
