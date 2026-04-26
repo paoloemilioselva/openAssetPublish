@@ -784,13 +784,16 @@ class PublishPage(QWidget):
                     payload_filename = "payload.usd"
                     payload_layer.Export(os.path.join(slot_dir, payload_filename))
                     
-                    # Update local index with relative payload path
-                    temp_stage = Usd.Stage.Open(index_layer)
-                    scope_prim = temp_stage.GetPrimAtPath(f"/main/{slot.slot_name}")
+                    # Work on a copy of the index layer so we don't pollute the live stage
+                    export_index_layer = Sdf.Layer.CreateAnonymous()
+                    export_index_layer.TransferContent(index_layer)
+                    
+                    export_stage = Usd.Stage.Open(export_index_layer)
+                    scope_prim = export_stage.GetPrimAtPath(f"/main/{slot.slot_name}")
                     if scope_prim:
                         scope_prim.GetPayloads().ClearPayloads()
                         scope_prim.GetPayloads().AddPayload(Sdf.Payload(payload_filename, "/main"))
-                    temp_stage.GetRootLayer().Export(os.path.join(slot_dir, "index.usda"))
+                    export_index_layer.Export(os.path.join(slot_dir, "index.usda"))
             else:
                 index_layer.Export(os.path.join(slot_dir, "index.usda"))
             
