@@ -96,22 +96,35 @@ class MaterialPropertyEditor(QScrollArea):
 
     def _create_input_widget(self, shader_input):
         # Check for existing texture connection via sources safely
-        sources = shader_input.GetConnectedSources()
-        if sources:
-            for info in sources:
-                # ConnectionSourceInfo has a 'source' attribute (ConnectableAPI)
-                source = info.source if hasattr(info, 'source') else info[0]
-                if not source: continue
-                
-                src_prim = source.GetPrim()
-                if src_prim.IsA(UsdShade.Shader):
-                    src_shader = UsdShade.Shader(src_prim)
-                    shader_id = str(src_shader.GetIdAttr().Get())
-                    if shader_id.startswith("ND_image"):
-                        file_input = src_shader.GetInput("file")
-                        if not file_input:
-                            file_input = src_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
-                        return self._create_texture_picker(file_input)
+        try:
+            sources = shader_input.GetConnectedSources()
+            if sources:
+                for info in sources:
+                    if info is None: continue
+                    
+                    source = None
+                    # Attempt to get source via attribute (ConnectionSourceInfo)
+                    if hasattr(info, 'source'):
+                        source = info.source
+                    # Fallback to index-based access (tuple/list)
+                    elif isinstance(info, (list, tuple)) and len(info) > 0:
+                        source = info[0]
+                    
+                    if not source: continue
+                    
+                    src_prim = source.GetPrim()
+                    if src_prim and src_prim.IsA(UsdShade.Shader):
+                        src_shader = UsdShade.Shader(src_prim)
+                        shader_id_attr = src_shader.GetIdAttr()
+                        if shader_id_attr.HasValue():
+                            shader_id = str(shader_id_attr.Get())
+                            if shader_id.startswith("ND_image"):
+                                file_input = src_shader.GetInput("file")
+                                if not file_input:
+                                    file_input = src_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
+                                return self._create_texture_picker(file_input)
+        except Exception as e:
+            print(f"DEBUG: Error checking connected sources: {e}")
 
         # Standard value widget with "T" button
         container = QWidget()
