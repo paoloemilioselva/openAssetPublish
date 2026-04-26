@@ -581,28 +581,51 @@ class PublishPage(QWidget):
             for slot in self.drop_slots:
                 index_layer = self.slot_index_layers.get(slot.slot_name)
                 if not index_layer: continue
+                
                 clean_name = slot.slot_name.lower().replace(" ", "_")
                 slot_dir = os.path.join(asset_dir, clean_name)
                 os.makedirs(slot_dir, exist_ok=True)
+                
                 if slot.slot_type == "payload":
                     payload_layer = self.slot_payload_layers.get(slot.slot_name)
-                    payload_filename = "payload.usd"
-                    payload_layer.Export(os.path.join(slot_dir, payload_filename))
-                    scope_prim = index_layer.GetPrimAtPath(f"/main/{slot.slot_name}")
-                    scope_prim.payloadList.prependedItems = [Sdf.Payload(payload_filename, "/main")]
-                # the following is valid for both slot types: payload and sublayer
-                index_layer.Export(os.path.join(slot_dir, "index.usda"))
+                    if payload_layer:
+                        payload_filename = "payload.usd"
+                        payload_layer.Export(os.path.join(slot_dir, payload_filename))
+                        # The anonymous index_layer already has a payload to the anonymous payload_layer.
+                        # We need to update that reference to be relative for the exported files.
+                        # However, since we are exporting the anonymous layers 'as they are', 
+                        # the index_layer will still point to the anonymous payload ID.
+                        # We MUST fix the payload path in the exported index layer.
+                        temp_stage = Usd.Stage.Open(index_layer)
+                        scope_prim = temp_stage.GetPrimAtPath(f"/main/{slot.slot_name}")
+                        if scope_prim:
+                            scope_prim.GetPayloads().ClearPayloads()
+                            scope_prim.GetPayloads().AddPayload(Sdf.Payload(payload_filename, "/main"))
+                        temp_stage.GetRootLayer().Export(os.path.join(slot_dir, "index.usda"))
+                else:
+                    index_layer.Export(os.path.join(slot_dir, "index.usda"))
+
                 final_sublayers.append(f"{clean_name}/index.usda")
+            
+            # Create root index stage
             root_stage = Usd.Stage.CreateNew(os.path.join(asset_dir, "index.usda"))
             root_main = root_stage.DefinePrim("/main")
             root_stage.SetDefaultPrim(root_main)
+            
+            # Apply root metadata
+            if self.settings:
+                UsdGeom.SetStageUpAxis(root_stage, self.settings.get_up_axis())
+                UsdGeom.SetStageMetersPerUnit(root_stage, self.settings.get_meters_per_unit())
+                
             root_stage.GetRootLayer().subLayerPaths = final_sublayers
             root_stage.Save()
+            
             QMessageBox.information(self, "Success", f"Asset '{name}' published.")
         except Exception as e:
             import traceback; traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Publish failed: {str(e)}")
             return
+        
         self.publish_requested.emit(name)
         self.rebuild_slots(self.settings.get_slots())
         self.name_input.clear()
