@@ -480,6 +480,14 @@ class PublishPage(QWidget):
         UsdGeom.Xform.Define(self.stage, "/main")
         self.stage.SetDefaultPrim(self.stage.GetPrimAtPath("/main"))
         
+        # Apply Stage Metadata from Settings
+        if self.settings:
+            up_axis = self.settings.get_up_axis()
+            meters = self.settings.get_meters_per_unit()
+            UsdGeom.SetStageUpAxis(self.stage, up_axis)
+            UsdGeom.SetStageMetersPerUnit(self.stage, meters)
+            print(f"DEBUG: Stage Metadata - Up Axis: {up_axis}, Meters Per Unit: {meters}")
+
         self.slot_index_layers = {}
         self.slot_payload_layers = {}
 
