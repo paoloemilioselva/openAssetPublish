@@ -496,6 +496,7 @@ class PublishPage(QWidget):
         self.stage = None
         self.slot_index_layers = {} 
         self.slot_payload_layers = {} 
+        self.path_to_item = {}
 
     def create_material(self):
         for slot in self.drop_slots:
@@ -525,19 +526,61 @@ class PublishPage(QWidget):
 
         self.refresh_outliner()
 
+    def _clear_outliner_highlights(self):
+        for item in self.path_to_item.values():
+            # Reset font weight and background
+            font = item.font(0)
+            font.setBold(False)
+            item.setFont(0, font)
+            item.setBackground(0, Qt.GlobalColor.transparent)
+
     def _on_selection_changed(self):
+        self._clear_outliner_highlights()
+        
         selected = self.outliner.selectedItems()
         if not selected:
             self.prop_editor.clear_editor()
             return
+            
         item = selected[0]
-        prim_path = item.data(0, Qt.ItemDataRole.UserRole)
+        prim_path_str = item.data(0, Qt.ItemDataRole.UserRole)
+        prim_path = Sdf.Path(prim_path_str)
+        
         if self.stage:
             prim = self.stage.GetPrimAtPath(prim_path)
-            if prim:
+            if not prim:
+                self.prop_editor.clear_editor()
+                return
+
+            # Highlight logic
+            if prim.IsA(UsdShade.Material):
+                # Selected a Material: highlight all meshes bound to it
+                for other_path_str, other_item in self.path_to_item.items():
+                    other_prim = self.stage.GetPrimAtPath(Sdf.Path(other_path_str))
+                    if other_prim:
+                        binding_api = UsdShade.MaterialBindingAPI(other_prim)
+                        mat, _ = binding_api.ComputeBoundMaterial()
+                        if mat and mat.GetPath() == prim_path:
+                            font = other_item.font(0)
+                            font.setBold(True)
+                            other_item.setFont(0, font)
+                            other_item.setBackground(0, QColor(0, 255, 153, 40)) # Soft green highlight
+                
                 mtl_layer = self.slot_index_layers.get("Materials")
                 self.prop_editor.load_prim(prim, edit_layer=mtl_layer)
             else:
+                # Selected a Mesh/Prim: highlight the material it's bound to
+                binding_api = UsdShade.MaterialBindingAPI(prim)
+                mat, _ = binding_api.ComputeBoundMaterial()
+                if mat:
+                    mat_path_str = str(mat.GetPath())
+                    mat_item = self.path_to_item.get(mat_path_str)
+                    if mat_item:
+                        font = mat_item.font(0)
+                        font.setBold(True)
+                        mat_item.setFont(0, font)
+                        mat_item.setBackground(0, QColor(0, 255, 153, 40))
+                
                 self.prop_editor.clear_editor()
 
     def set_settings(self, settings_page):
@@ -714,6 +757,7 @@ class PublishPage(QWidget):
     def refresh_outliner(self):
         self.outliner.blockSignals(True)
         self.outliner.clear()
+        self.path_to_item = {}
         if self.stage:
             main_prim = self.stage.GetPrimAtPath("/main")
             if main_prim: self._add_prim_to_tree(main_prim, self.outliner)
@@ -721,12 +765,27 @@ class PublishPage(QWidget):
 
     def _add_prim_to_tree(self, prim, parent_item):
         name, type_name = prim.GetName(), prim.GetTypeName()
-        display_name = f"{name} ({type_name})"
+        
+        # Check for material binding to show in outliner
+        binding_label = ""
+        binding_api = UsdShade.MaterialBindingAPI(prim)
+        if binding_api:
+            mat, _ = binding_api.ComputeBoundMaterial()
+            if mat:
+                binding_label = f" -> [{mat.GetPrim().GetName()}]"
+
+        display_name = f"{name} ({type_name}){binding_label}"
         item = QTreeWidgetItem(parent_item, [display_name])
-        item.setData(0, Qt.ItemDataRole.UserRole, str(prim.GetPath()))
+        path_str = str(prim.GetPath())
+        item.setData(0, Qt.ItemDataRole.UserRole, path_str)
         item.setData(0, Qt.ItemDataRole.UserRole + 1, str(type_name))
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-        if type_name == "Material": item.setForeground(0, QColor("#00ff99"))
+        
+        if type_name == "Material": 
+            item.setForeground(0, QColor("#00ff99"))
+        
+        self.path_to_item[path_str] = item
+        
         item.setExpanded(True)
         for child in prim.GetChildren():
             if child.IsValid(): self._add_prim_to_tree(child, item)
