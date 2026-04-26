@@ -1,5 +1,18 @@
 {
     "library_path": "C:/Users/paolo/Desktop/openscene/assets",
+    "up_axis": "Y",
+    "meters_per_unit": 0.01,
+    "obj_import": {
+        "rotation": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "scale": 1.0,
+        "preview": true,
+        "subdivision": false,
+        "recalc_normals": true
+    },
     "slots": [
         {
             "name": "Bindings",

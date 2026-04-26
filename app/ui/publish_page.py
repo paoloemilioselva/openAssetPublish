@@ -554,7 +554,6 @@ class PublishPage(QWidget):
         self.outliner.blockSignals(True)
         self.outliner.clear()
         if self.stage:
-            self.stage.Reload()
             main_prim = self.stage.GetPrimAtPath("/main")
             if main_prim: self._add_prim_to_tree(main_prim, self.outliner)
         self.outliner.blockSignals(False)
@@ -588,19 +587,11 @@ class PublishPage(QWidget):
                 if slot.slot_type == "payload":
                     payload_layer = self.slot_payload_layers.get(slot.slot_name)
                     payload_filename = "payload.usd"
-                    Usd.Stage.Open(payload_layer).Flatten().Export(os.path.join(slot_dir, payload_filename))
-                    comp_stage = Usd.Stage.CreateNew(os.path.join(asset_dir, f"{clean_name}/index.usda"))
-                    comp_main = comp_stage.DefinePrim("/main")
-                    comp_stage.SetDefaultPrim(comp_main)
-                    scope = comp_stage.DefinePrim(f"/main/{slot.slot_name}", "Scope")
-                    scope.GetPayloads().AddPayload(Sdf.Payload(payload_filename, "/main"))
-                    author_stage = Usd.Stage.Open(index_layer)
-                    for prim in author_stage.Traverse():
-                        if prim.IsA(UsdShade.Material) or prim.IsA(UsdShade.Shader):
-                            Sdf.CopySpec(index_layer, prim.GetPath(), comp_stage.GetRootLayer(), prim.GetPath())
-                    comp_stage.Save()
-                else:
-                    index_layer.Export(os.path.join(asset_dir, f"{clean_name}/index.usda"))
+                    payload_layer.Export(os.path.join(slot_dir, payload_filename))
+                    scope_prim = index_layer.GetPrimAtPath(f"/main/{slot.slot_name}")
+                    scope_prim.payloadList.prependedItems = [Sdf.Payload(payload_filename, "/main")]
+                # the following is valid for both slot types: payload and sublayer
+                index_layer.Export(os.path.join(slot_dir, "index.usda"))
                 final_sublayers.append(f"{clean_name}/index.usda")
             root_stage = Usd.Stage.CreateNew(os.path.join(asset_dir, "index.usda"))
             root_main = root_stage.DefinePrim("/main")
