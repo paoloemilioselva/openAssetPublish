@@ -383,20 +383,20 @@ class PublishPage(QWidget):
             item = self.slots_container_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
         self.drop_slots = []
-        self.slot_selector.clear()
         for s in slots_data:
             slot = DropSlot(s["name"], s["type"])
             slot.file_dropped.connect(self.on_file_dropped)
             self.slots_container_layout.addWidget(slot)
             self.drop_slots.append(slot)
-            self.slot_selector.addItem(s["name"])
         self._create_new_stage()
 
     def on_file_dropped(self, file_path):
         slot = self.sender()
         if not slot: return
+        # Flatten the dropped file to ensure all its layers are combined
         source_layer = UsdUtils.FlattenLayerStack(Usd.Stage.Open(file_path))
         if not source_layer: return
+        
         if slot.slot_type == "payload":
             payload_layer = self.slot_payload_layers.get(slot.slot_name)
             if payload_layer:
@@ -410,6 +410,7 @@ class PublishPage(QWidget):
                 with Sdf.ChangeBlock():
                     index_layer.Clear()
                     index_layer.TransferContent(source_layer)
+        
         self.refresh_outliner()
 
     def _create_new_stage(self):
@@ -439,12 +440,8 @@ class PublishPage(QWidget):
                 with Usd.EditContext(self.stage, index_layer):
                     # Payload main -> index layer
                     scope_prim = self.stage.DefinePrim(f"/main/{slot.slot_name}", "Scope")
-                    # there shouldn't be any need to specify the /main prim, as it comes as defaultPrim in the payload layer already.
                     scope_prim.GetPayloads().AddPayload(Sdf.Payload(payload_layer.identifier, "/main"))
 
-                    
-                
-            
         self.refresh_outliner()
 
     def bind_material(self, mat_path, target_path):
@@ -462,10 +459,16 @@ class PublishPage(QWidget):
         self.outliner.blockSignals(True)
         self.outliner.clear()
         if self.stage:
+            # Force the stage to re-compose by reloading the root layer
+            self.stage.GetRootLayer().Reload()
+            
             # Start traversal from the main prim
             main_prim = self.stage.GetPrimAtPath("/main")
             if main_prim:
+                print(f"DEBUG: Found main prim, starting traversal. Children: {len(main_prim.GetChildren())}")
                 self._add_prim_to_tree(main_prim, self.outliner)
+            else:
+                print("DEBUG: Main prim not found in stage!")
         self.outliner.blockSignals(False)
 
     def _add_prim_to_tree(self, prim, parent_item):
