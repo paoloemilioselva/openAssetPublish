@@ -416,22 +416,31 @@ class PublishPage(QWidget):
         self.stage = Usd.Stage.CreateInMemory()
         UsdGeom.Xform.Define(self.stage, "/main")
         self.stage.SetDefaultPrim(self.stage.GetPrimAtPath("/main"))
+        
         self.slot_index_layers = {}
         self.slot_payload_layers = {}
 
         for slot in self.drop_slots:
             index_layer = Sdf.Layer.CreateAnonymous(f"{slot.slot_name}/index.usda")
             self.slot_index_layers[slot.slot_name] = index_layer
+
+            # every slot is sublayered
             self.stage.GetRootLayer().subLayerPaths.append(index_layer.identifier)
 
+            # only the payload slot will have a subfolder and sub-file for payload data
             if slot.slot_type == "payload":
                 payload_layer = Sdf.Layer.CreateAnonymous(f"{slot.slot_name}/payload.usd")
                 self.slot_payload_layers[slot.slot_name] = payload_layer
+                # every payload will have a /main prim
                 Sdf.CreatePrimInLayer(payload_layer, "/main")
                 payload_layer.defaultPrim = "main"
+                
+                # send edit to a specific layer
                 with Usd.EditContext(self.stage, index_layer):
+                    # Payload main -> index layer
                     scope_prim = self.stage.DefinePrim(f"/main/{slot.slot_name}", "Scope")
                     scope_prim.GetPayloads().AddPayload(Sdf.Payload(payload_layer.identifier, "/main"))
+
         self.refresh_outliner()
 
     def bind_material(self, mat_path, target_path):
@@ -449,6 +458,7 @@ class PublishPage(QWidget):
         self.outliner.blockSignals(True)
         self.outliner.clear()
         if self.stage:
+            # Start traversal from the main prim
             main_prim = self.stage.GetPrimAtPath("/main")
             if main_prim:
                 print(f"DEBUG: Found main prim, starting traversal. Children: {len(main_prim.GetChildren())}")
