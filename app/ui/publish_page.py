@@ -8,6 +8,8 @@ from PySide6.QtCore import Qt, Signal, QPoint, QTimer
 from PySide6.QtGui import QDrag, QColor, QFont
 import os
 import shutil
+import tempfile
+import subprocess
 
 from pxr import Usd, Sdf, UsdShade, Gf, Tf, Sdr, UsdGeom, UsdUtils
 
@@ -479,6 +481,12 @@ class PublishPage(QWidget):
         self.splitter.setSizes([300, 400, 300])
         self.main_layout.addWidget(self.splitter)
         
+        self.preview_btn = QPushButton("Preview Asset")
+        self.preview_btn.setObjectName("PreviewButton")
+        self.preview_btn.setMinimumHeight(40)
+        self.preview_btn.clicked.connect(self.on_preview)
+        self.main_layout.addWidget(self.preview_btn)
+
         self.publish_btn = QPushButton("Publish Asset")
         self.publish_btn.setObjectName("PublishButton")
         self.publish_btn.setMinimumHeight(50)
@@ -723,47 +731,80 @@ class PublishPage(QWidget):
         for child in prim.GetChildren():
             if child.IsValid(): self._add_prim_to_tree(child, item)
 
+    def on_preview(self):
+        with tempfile.TemporaryDirectory(prefix="usd_preview_") as tmp_dir:
+            try:
+                index_path = self._perform_export(tmp_dir)
+                if index_path:
+                    # Launch usdview in a separate process that doesn't block the UI
+                    # We need to use a permanent temp dir because TemporaryDirectory 
+                    # deletes itself when exiting the context block.
+                    perm_tmp = tempfile.mkdtemp(prefix="usd_preview_")
+                    shutil.rmtree(perm_tmp) # cleanup mkdtemp if it exists
+                    shutil.copytree(tmp_dir, perm_tmp)
+                    
+                    final_index = os.path.join(perm_tmp, "index.usda")
+                    subprocess.Popen(f'usdview "{final_index}"', shell=True)
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                QMessageBox.critical(self, "Preview Error", f"Preview failed: {str(e)}")
+
     def on_publish(self):
         name = self.name_input.text().strip()
         if not name: return
         lib_path = self.settings.get_library_path() if self.settings else os.getcwd()
         asset_dir = os.path.normpath(os.path.join(lib_path, name))
-        os.makedirs(asset_dir, exist_ok=True)
-        final_sublayers = []
+        
         try:
-            for slot in self.drop_slots:
-                index_layer = self.slot_index_layers.get(slot.slot_name)
-                if not index_layer: continue
-                clean_name = slot.slot_name.lower().replace(" ", "_")
-                slot_dir = os.path.join(asset_dir, clean_name)
-                os.makedirs(slot_dir, exist_ok=True)
-                if slot.slot_type == "payload":
-                    payload_layer = self.slot_payload_layers.get(slot.slot_name)
-                    if payload_layer:
-                        payload_filename = "payload.usd"
-                        payload_layer.Export(os.path.join(slot_dir, payload_filename))
-                        temp_stage = Usd.Stage.Open(index_layer)
-                        scope_prim = temp_stage.GetPrimAtPath(f"/main/{slot.slot_name}")
-                        if scope_prim:
-                            scope_prim.GetPayloads().ClearPayloads()
-                            scope_prim.GetPayloads().AddPayload(Sdf.Payload(payload_filename, "/main"))
-                        temp_stage.GetRootLayer().Export(os.path.join(slot_dir, "index.usda"))
-                else:
-                    index_layer.Export(os.path.join(slot_dir, "index.usda"))
-                final_sublayers.append(f"{clean_name}/index.usda")
-            root_stage = Usd.Stage.CreateNew(os.path.join(asset_dir, "index.usda"))
-            root_main = root_stage.DefinePrim("/main")
-            root_stage.SetDefaultPrim(root_main)
-            if self.settings:
-                UsdGeom.SetStageUpAxis(root_stage, self.settings.get_up_axis())
-                UsdGeom.SetStageMetersPerUnit(root_stage, self.settings.get_meters_per_unit())
-            root_stage.GetRootLayer().subLayerPaths = final_sublayers
-            root_stage.Save()
-            QMessageBox.information(self, "Success", f"Asset '{name}' published.")
+            index_path = self._perform_export(asset_dir)
+            if index_path:
+                QMessageBox.information(self, "Success", f"Asset '{name}' published.")
+                self.publish_requested.emit(name)
+                self.rebuild_slots(self.settings.get_slots())
+                self.name_input.clear()
         except Exception as e:
             import traceback; traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Publish failed: {str(e)}")
-            return
-        self.publish_requested.emit(name)
-        self.rebuild_slots(self.settings.get_slots())
-        self.name_input.clear()
+
+    def _perform_export(self, asset_dir):
+        os.makedirs(asset_dir, exist_ok=True)
+        final_sublayers = []
+        
+        for slot in self.drop_slots:
+            index_layer = self.slot_index_layers.get(slot.slot_name)
+            if not index_layer: continue
+            
+            clean_name = slot.slot_name.lower().replace(" ", "_")
+            slot_dir = os.path.join(asset_dir, clean_name)
+            os.makedirs(slot_dir, exist_ok=True)
+            
+            if slot.slot_type == "payload":
+                payload_layer = self.slot_payload_layers.get(slot.slot_name)
+                if payload_layer:
+                    payload_filename = "payload.usd"
+                    payload_layer.Export(os.path.join(slot_dir, payload_filename))
+                    
+                    # Update local index with relative payload path
+                    temp_stage = Usd.Stage.Open(index_layer)
+                    scope_prim = temp_stage.GetPrimAtPath(f"/main/{slot.slot_name}")
+                    if scope_prim:
+                        scope_prim.GetPayloads().ClearPayloads()
+                        scope_prim.GetPayloads().AddPayload(Sdf.Payload(payload_filename, "/main"))
+                    temp_stage.GetRootLayer().Export(os.path.join(slot_dir, "index.usda"))
+            else:
+                index_layer.Export(os.path.join(slot_dir, "index.usda"))
+            
+            final_sublayers.append(f"{clean_name}/index.usda")
+            
+        root_index_path = os.path.join(asset_dir, "index.usda")
+        root_stage = Usd.Stage.CreateNew(root_index_path)
+        root_main = root_stage.DefinePrim("/main")
+        root_stage.SetDefaultPrim(root_main)
+        
+        if self.settings:
+            UsdGeom.SetStageUpAxis(root_stage, self.settings.get_up_axis())
+            UsdGeom.SetStageMetersPerUnit(root_stage, self.settings.get_meters_per_unit())
+            
+        root_stage.GetRootLayer().subLayerPaths = final_sublayers
+        root_stage.Save()
+        return root_index_path
