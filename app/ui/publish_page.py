@@ -95,13 +95,16 @@ class MaterialPropertyEditor(QScrollArea):
                 self.layout.addRow(shader_input.GetBaseName(), widget)
 
     def _create_input_widget(self, shader_input):
+        # Check if type is already Asset
+        if shader_input.GetTypeName() == Sdf.ValueTypeNames.Asset:
+            return TexturePickerWidget(shader_input, self)
+
         # Check for existing texture connection via sources safely
         try:
             # GetConnectedSources returns (sourceInfos, invalidSourceInfos)
             sources, _ = shader_input.GetConnectedSources()
             if sources:
                 for info in sources:
-                    # info is a UsdShade.ConnectionSourceInfo
                     source_api = info.source # This is a UsdShade.ConnectableAPI
                     if not source_api: continue
                     
@@ -115,7 +118,7 @@ class MaterialPropertyEditor(QScrollArea):
                                 file_input = src_shader.GetInput("file")
                                 if not file_input:
                                     file_input = src_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
-                                return self._create_texture_picker(file_input)
+                                return TexturePickerWidget(file_input, self)
         except Exception as e:
             import traceback; traceback.print_exc()
             print(f"DEBUG: Error checking connected sources: {e}")
@@ -153,37 +156,21 @@ class MaterialPropertyEditor(QScrollArea):
             spin.setValue(value if value is not None else 0.0)
             spin.valueChanged.connect(lambda v: self._update_float(shader_input, v))
             return spin
+        elif type_name == Sdf.ValueTypeNames.Asset:
+            return TexturePickerWidget(shader_input, self)
         else:
             label = QLabel(str(value) if value is not None else "None")
             label.setStyleSheet("color: #aaa;")
             return label
 
     def _create_texture_picker(self, file_input):
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        value = file_input.Get()
-        path_str = str(value.path) if value else ""
-        
-        path_edit = QLineEdit(path_str)
-        browse_btn = QPushButton("...")
-        browse_btn.setFixedWidth(30)
-        
-        layout.addWidget(path_edit)
-        layout.addWidget(browse_btn)
-        
-        path_edit.editingFinished.connect(lambda: self._update_asset_path(file_input, path_edit.text()))
-        browse_btn.clicked.connect(lambda: self._browse_asset(file_input, path_edit))
-        return container
+        return TexturePickerWidget(file_input, self)
 
     def _convert_to_texture(self, shader_input):
-        prim = shader_input.GetPrim()
-        # Find material parent to house the texture shader
-        material_prim = prim if prim.IsA(UsdShade.Material) else prim.GetParent()
+        material_prim = shader_input.GetPrim()
         if not material_prim.IsA(UsdShade.Material): return
         
-        stage = prim.GetStage()
+        stage = material_prim.GetStage()
         input_name = shader_input.GetBaseName()
         sdf_type = shader_input.GetTypeName()
         
@@ -191,17 +178,29 @@ class MaterialPropertyEditor(QScrollArea):
         tex_id = f"ND_image_{tex_type_suffix}"
         
         with Sdf.ChangeBlock():
+            # 1. Redefine Material input as Asset
+            shader_input.SetTypeName(Sdf.ValueTypeNames.Asset)
+            
+            # 2. Create texture shader
             tex_path = material_prim.GetPath().AppendChild(f"tex_{input_name}")
             tex_shader = UsdShade.Shader.Define(stage, tex_path)
             tex_shader.CreateIdAttr(tex_id)
-            tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
+            tex_file_in = tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
             tex_out = tex_shader.CreateOutput("out", sdf_type)
             
-            # Connect the selected input to the texture output
-            shader_input.ConnectToSource(tex_out)
+            # 3. Connect texture shader's file input to Material Input
+            tex_file_in.ConnectToSource(shader_input)
+            
+            # 4. Connect internal surface shader to texture output
+            surface_shader_prim = material_prim.GetChild("shader")
+            if surface_shader_prim:
+                surface_shader = UsdShade.Shader(surface_shader_prim)
+                shd_in = surface_shader.GetInput(input_name)
+                if shd_in:
+                    shd_in.ConnectToSource(tex_out)
             
         self.value_changed.emit()
-        self.load_prim(prim)
+        self.load_prim(material_prim)
 
     def _open_color_picker(self, shader_input, button):
         val = shader_input.Get()
@@ -225,6 +224,46 @@ class MaterialPropertyEditor(QScrollArea):
     def _update_float(self, shader_input, value):
         shader_input.Set(float(value))
         self.value_changed.emit()
+
+class TexturePickerWidget(QWidget):
+    def __init__(self, file_input, editor):
+        super().__init__()
+        self.file_input = file_input
+        self.editor = editor
+        self.setAcceptDrops(True)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        value = file_input.Get()
+        path_str = str(value.path) if value else ""
+        
+        self.path_edit = QLineEdit(path_str)
+        self.browse_btn = QPushButton("...")
+        self.browse_btn.setFixedWidth(30)
+        
+        layout.addWidget(self.path_edit)
+        layout.addWidget(self.browse_btn)
+        
+        self.path_edit.editingFinished.connect(self._on_edit_finished)
+        self.browse_btn.clicked.connect(self._on_browse)
+
+    def _on_edit_finished(self):
+        self.editor._update_asset_path(self.file_input, self.path_edit.text())
+
+    def _on_browse(self):
+        self.editor._browse_asset(self.file_input, self.path_edit)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if urls:
+            path = urls[0].toLocalFile()
+            self.path_edit.setText(path)
+            self.editor._update_asset_path(self.file_input, path)
+            event.acceptProposedAction()
 
 class DropSlot(QFrame):
     file_dropped = Signal(str)
