@@ -98,22 +98,28 @@ class MaterialPropertyEditor(QScrollArea):
         # Check for existing texture connection via sources safely
         try:
             sources = shader_input.GetConnectedSources()
-            if sources:
+            if sources and len(sources) > 0:
                 for info in sources:
                     if info is None: continue
-                    source = info.source if hasattr(info, 'source') else (info[0] if isinstance(info, (list, tuple)) else None)
+                    source = info.source if hasattr(info, 'source') else None
+                    if not source and isinstance(info, (list, tuple)) and len(info) > 0:
+                        source = info[0]
+                    
                     if not source: continue
                     
                     src_prim = source.GetPrim()
                     if src_prim and src_prim.IsA(UsdShade.Shader):
                         src_shader = UsdShade.Shader(src_prim)
-                        shader_id = str(src_shader.GetIdAttr().Get())
-                        if "ND_image" in shader_id:
-                            file_input = src_shader.GetInput("file")
-                            if not file_input:
-                                file_input = src_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
-                            return self._create_texture_picker(file_input)
+                        shader_id_attr = src_shader.GetIdAttr()
+                        if shader_id_attr.HasValue():
+                            shader_id = str(shader_id_attr.Get())
+                            if "ND_image" in shader_id:
+                                file_input = src_shader.GetInput("file")
+                                if not file_input:
+                                    file_input = src_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
+                                return self._create_texture_picker(file_input)
         except Exception as e:
+            import traceback; traceback.print_exc()
             print(f"DEBUG: Error checking connected sources: {e}")
 
         # Standard value widget with "T" button
