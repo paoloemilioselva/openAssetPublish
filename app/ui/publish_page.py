@@ -263,12 +263,10 @@ class PublishPage(QWidget):
         self.settings = None 
         self.drop_slots = []
         
-        # Resizable columns with QSplitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setHandleWidth(10)
         
-        # Left Panel
         self.left_panel = QFrame()
         self.left_panel.setObjectName("PublishPanel")
         self.left_layout = QVBoxLayout(self.left_panel)
@@ -284,7 +282,6 @@ class PublishPage(QWidget):
         self.left_layout.addLayout(self.slots_container_layout)
         self.left_layout.addStretch()
         
-        # Mid Panel
         self.mid_panel = QFrame()
         self.mid_panel.setObjectName("PublishPanel")
         self.mid_layout = QVBoxLayout(self.mid_panel)
@@ -299,14 +296,12 @@ class PublishPage(QWidget):
         self.mid_layout.addWidget(self.outliner_label)
         self.mid_layout.addWidget(self.outliner)
         
-        # Material Control Bar
         self.create_mtl_btn = QPushButton("Create New Material")
         self.create_mtl_btn.setObjectName("PublishButton")
         self.create_mtl_btn.setMinimumHeight(40)
         self.create_mtl_btn.clicked.connect(self.create_material)
         self.mid_layout.addWidget(self.create_mtl_btn)
         
-        # Right Panel
         self.right_panel = QFrame()
         self.right_panel.setObjectName("PublishPanel")
         self.right_layout = QVBoxLayout(self.right_panel)
@@ -318,12 +313,10 @@ class PublishPage(QWidget):
         self.right_layout.addWidget(self.prop_label)
         self.right_layout.addWidget(self.prop_editor)
 
-        # Assemble Splitter
         self.splitter.addWidget(self.left_panel)
         self.splitter.addWidget(self.mid_panel)
         self.splitter.addWidget(self.right_panel)
         self.splitter.setSizes([300, 400, 300])
-        
         self.main_layout.addWidget(self.splitter)
         
         self.publish_btn = QPushButton("Publish Asset")
@@ -397,7 +390,7 @@ class PublishPage(QWidget):
         self._create_new_stage()
 
     def _parse_obj(self, file_path):
-        """Simple OBJ parser to create a USD Mesh with direct vertex transformation."""
+        """Simple OBJ parser to create a USD Mesh with direct vertex transformation and CW winding."""
         vertices = []
         obj_normals = []
         face_indices = []
@@ -428,8 +421,6 @@ class PublishPage(QWidget):
                         p = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
                         vertices.append(Gf.Vec3f(total_mat.Transform(p)))
                     elif parts[0] == 'vn':
-                        # OBJ normals are vectors, transform differently than points
-                        # For simple rotation/uniform scale, TransformDir is fine.
                         n = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
                         obj_normals.append(Gf.Vec3f(total_mat.TransformDir(n).GetNormalized()))
                     elif parts[0] == 'f':
@@ -437,16 +428,20 @@ class PublishPage(QWidget):
                         for p in parts[1:]:
                             v_idx = int(p.split('/')[0])
                             face_v_indices.append(v_idx - 1)
-                        face_counts.append(len(face_v_indices))
-                        face_indices.extend(face_v_indices)
                         
-                        # Recalculate face normal if enabled
+                        # Recalculate face normal if enabled (BEFORE reversing winding)
                         if recalc_normals and len(face_v_indices) >= 3:
                             v0 = vertices[face_v_indices[0]]
                             v1 = vertices[face_v_indices[1]]
                             v2 = vertices[face_v_indices[2]]
                             normal = Gf.Cross(v1-v0, v2-v0).GetNormalized()
                             face_normals.append(normal)
+                        
+                        # FORCE CLOCKWISE WINDING
+                        face_v_indices.reverse()
+                        
+                        face_counts.append(len(face_v_indices))
+                        face_indices.extend(face_v_indices)
             
             temp_stage = Usd.Stage.CreateInMemory()
             UsdGeom.Xform.Define(temp_stage, "/main")
@@ -458,12 +453,15 @@ class PublishPage(QWidget):
             mesh.CreatePointsAttr(vertices)
             mesh.CreateFaceVertexIndicesAttr(face_indices)
             mesh.CreateFaceVertexCountsAttr(face_counts)
+            
+            # SET CLOCKWISE ORIENTATION
+            mesh.CreateOrientationAttr(UsdGeom.Tokens.leftHanded)
 
-            # Apply Normals
             if recalc_normals or not obj_normals:
-                if not face_normals: # Fallback if no faces were processed
+                if not face_normals:
                     for i in range(0, len(face_indices), 3):
                         if i+2 < len(face_indices):
+                            # Calculate using reversed (CW) indices
                             v0, v1, v2 = vertices[face_indices[i]], vertices[face_indices[i+1]], vertices[face_indices[i+2]]
                             face_normals.append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
                 mesh.CreateNormalsAttr(face_normals)
@@ -472,7 +470,6 @@ class PublishPage(QWidget):
                 mesh.CreateNormalsAttr(obj_normals)
                 mesh.SetNormalsInterpolation(UsdGeom.Tokens.varying)
 
-            # Apply Subdivision Settings
             subdiv_scheme = "catmullClark"
             if self.settings:
                 obj_settings = self.settings.get_obj_import_settings()
