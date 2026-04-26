@@ -11,8 +11,49 @@ import shutil
 
 from pxr import Usd, Sdf, UsdShade, Gf, Tf, Sdr, UsdGeom, UsdUtils
 
+STANDARD_SURFACE_CHANNELS = [
+    ("base", Sdf.ValueTypeNames.Float),
+    ("base_color", Sdf.ValueTypeNames.Color3f),
+    ("coat", Sdf.ValueTypeNames.Float),
+    ("coat_affect_color", Sdf.ValueTypeNames.Float),
+    ("coat_affect_roughness", Sdf.ValueTypeNames.Float),
+    ("coat_anisotropy", Sdf.ValueTypeNames.Float),
+    ("coat_color", Sdf.ValueTypeNames.Color3f),
+    ("coat_IOR", Sdf.ValueTypeNames.Float),
+    ("coat_normal", Sdf.ValueTypeNames.Vector3f),
+    ("coat_rotation", Sdf.ValueTypeNames.Float),
+    ("coat_roughness", Sdf.ValueTypeNames.Float),
+    ("diffuse_roughness", Sdf.ValueTypeNames.Float),
+    ("emission", Sdf.ValueTypeNames.Float),
+    ("emission_color", Sdf.ValueTypeNames.Color3f),
+    ("metalness", Sdf.ValueTypeNames.Float),
+    ("opacity", Sdf.ValueTypeNames.Color3f),
+    ("sheen", Sdf.ValueTypeNames.Float),
+    ("sheen_color", Sdf.ValueTypeNames.Color3f),
+    ("sheen_roughness", Sdf.ValueTypeNames.Float),
+    ("specular", Sdf.ValueTypeNames.Float),
+    ("specular_anisotropy", Sdf.ValueTypeNames.Float),
+    ("specular_color", Sdf.ValueTypeNames.Color3f),
+    ("specular_IOR", Sdf.ValueTypeNames.Float),
+    ("specular_rotation", Sdf.ValueTypeNames.Float),
+    ("specular_roughness", Sdf.ValueTypeNames.Float),
+    ("subsurface", Sdf.ValueTypeNames.Float),
+    ("subsurface_anisotropy", Sdf.ValueTypeNames.Float),
+    ("subsurface_color", Sdf.ValueTypeNames.Color3f),
+    ("subsurface_radius", Sdf.ValueTypeNames.Color3f),
+    ("subsurface_scale", Sdf.ValueTypeNames.Float),
+    ("thin_film_IOR", Sdf.ValueTypeNames.Float),
+    ("thin_film_thickness", Sdf.ValueTypeNames.Float),
+    ("transmission", Sdf.ValueTypeNames.Float),
+    ("transmission_color", Sdf.ValueTypeNames.Color3f),
+    ("transmission_depth", Sdf.ValueTypeNames.Float),
+    ("transmission_extra_roughness", Sdf.ValueTypeNames.Float),
+    ("transmission_scatter", Sdf.ValueTypeNames.Color3f),
+    ("transmission_scatter_anisotropy", Sdf.ValueTypeNames.Float)
+]
+
 class MaterialPropertyEditor(QScrollArea):
-    """Dynamically generates UI for USD Material/Shader inputs."""
+    """Dynamically generates UI for USD Material/Shader inputs with Texture support."""
     value_changed = Signal()
 
     def __init__(self):
@@ -36,41 +77,47 @@ class MaterialPropertyEditor(QScrollArea):
     def load_prim(self, prim):
         self.clear_editor()
         if not prim: return
-        
         self.current_prim = prim
-        inputs_found = []
-        material = UsdShade.Material(prim)
-        if material:
-            inputs_found.extend(material.GetInputs())
-
+        
         shader = UsdShade.Shader(prim)
-        if not shader and material:
-            for child in prim.GetChildren():
-                if child.IsA(UsdShade.Shader):
-                    shader = UsdShade.Shader(child)
-                    break
-        if shader:
-            inputs_found.extend(shader.GetInputs())
+        if not shader: return
 
-        if not inputs_found:
-            label = QLabel("No editable inputs found.")
-            label.setStyleSheet("font-style: italic; color: #888;")
-            self.layout.addRow(label)
-            return
-
-        seen_names = set()
-        for shader_input in sorted(inputs_found, key=lambda x: x.GetBaseName()):
-            base_name = shader_input.GetBaseName()
-            if base_name in seen_names: continue
-            seen_names.add(base_name)
-            
+        inputs = sorted(shader.GetInputs(), key=lambda x: x.GetBaseName())
+        for shader_input in inputs:
             widget = self._create_input_widget(shader_input)
             if widget:
-                self.layout.addRow(base_name, widget)
+                self.layout.addRow(shader_input.GetBaseName(), widget)
 
     def _create_input_widget(self, shader_input):
+        # Check for existing texture connection
+        source, source_output_name, source_type = shader_input.GetConnectedSource()
+        if source:
+            src_prim = source.GetPrim()
+            if src_prim.IsA(UsdShade.Shader):
+                src_shader = UsdShade.Shader(src_prim)
+                if str(src_shader.GetIdAttr().Get()).startswith("ND_image"):
+                    file_input = src_shader.GetInput("file")
+                    return self._create_texture_picker(file_input)
+
+        # Standard value widget with "T" button
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        val_widget = self._get_value_widget(shader_input)
+        tex_btn = QPushButton("T")
+        tex_btn.setFixedWidth(25)
+        tex_btn.setToolTip("Connect Texture")
+        tex_btn.clicked.connect(lambda: self._convert_to_texture(shader_input))
+        
+        layout.addWidget(val_widget)
+        layout.addWidget(tex_btn)
+        return container
+
+    def _get_value_widget(self, shader_input):
         value = shader_input.Get()
         type_name = shader_input.GetTypeName()
+        
         if type_name == Sdf.ValueTypeNames.Color3f:
             btn = QPushButton()
             btn.setMinimumHeight(25)
@@ -78,18 +125,6 @@ class MaterialPropertyEditor(QScrollArea):
             btn.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
             btn.clicked.connect(lambda: self._open_color_picker(shader_input, btn))
             return btn
-        elif type_name == Sdf.ValueTypeNames.Asset:
-            container = QWidget()
-            layout = QHBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            path_edit = QLineEdit(str(value.path) if value else "")
-            browse_btn = QPushButton("...")
-            browse_btn.setFixedWidth(30)
-            layout.addWidget(path_edit)
-            layout.addWidget(browse_btn)
-            path_edit.editingFinished.connect(lambda: self._update_asset_path(shader_input, path_edit.text()))
-            browse_btn.clicked.connect(lambda: self._browse_asset(shader_input, path_edit))
-            return container
         elif type_name == Sdf.ValueTypeNames.Float:
             spin = QDoubleSpinBox()
             spin.setRange(-10000, 10000)
@@ -101,6 +136,52 @@ class MaterialPropertyEditor(QScrollArea):
             label = QLabel(str(value) if value is not None else "None")
             label.setStyleSheet("color: #aaa;")
             return label
+
+    def _create_texture_picker(self, file_input):
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        value = file_input.Get()
+        path_str = str(value.path) if value else ""
+        
+        path_edit = QLineEdit(path_str)
+        browse_btn = QPushButton("...")
+        browse_btn.setFixedWidth(30)
+        
+        layout.addWidget(path_edit)
+        layout.addWidget(browse_btn)
+        
+        path_edit.editingFinished.connect(lambda: self._update_asset_path(file_input, path_edit.text()))
+        browse_btn.clicked.connect(lambda: self._browse_asset(file_input, path_edit))
+        return container
+
+    def _convert_to_texture(self, shader_input):
+        shader_prim = shader_input.GetPrim()
+        material_prim = shader_prim.GetParent()
+        if not material_prim.IsA(UsdShade.Material): return
+        
+        stage = shader_prim.GetStage()
+        input_name = shader_input.GetBaseName()
+        sdf_type = shader_input.GetTypeName()
+        
+        # Determine texture shader ID based on type
+        tex_type_suffix = str(sdf_type).replace("3f", "3")
+        tex_id = f"ND_image_{tex_type_suffix}"
+        
+        with Sdf.ChangeBlock():
+            # Create texture shader as sibling to the surface shader
+            tex_path = material_prim.GetPath().AppendChild(f"tex_{input_name}")
+            tex_shader = UsdShade.Shader.Define(stage, tex_path)
+            tex_shader.CreateIdAttr(tex_id)
+            tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
+            tex_out = tex_shader.CreateOutput("out", sdf_type)
+            
+            # Connect the input to the texture output
+            shader_input.ConnectToSource(tex_out)
+            
+        self.value_changed.emit()
+        self.load_prim(shader_prim)
 
     def _open_color_picker(self, shader_input, button):
         val = shader_input.Get()
@@ -167,11 +248,8 @@ class DropSlot(QFrame):
         urls = event.mimeData().urls()
         if urls:
             self.file_path = urls[0].toLocalFile()
-            
-            # Truncate path to show only last 2 folders + filename
             parts = os.path.normpath(self.file_path).split(os.sep)
             display_path = os.sep.join(parts[-3:]) if len(parts) > 3 else self.file_path
-            
             self.path_label.setText(display_path)
             self.path_label.setStyleSheet("color: #007acc; font-weight: bold; font-style: normal;")
             self.file_dropped.emit(self.file_path)
@@ -346,22 +424,18 @@ class PublishPage(QWidget):
                     
                     material = UsdShade.Material.Define(self.stage, mtl_path)
                     shd_path = mtl_path.AppendChild("shader")
-                    shader = UsdShade.Shader.Define(self.stage, shd_path)
-                    shader.CreateIdAttr("ND_standard_surface_surfaceshader")
-                    material.CreateSurfaceOutput("mtlx").ConnectToSource(shader.ConnectableAPI(), "surface")
+                    surface = UsdShade.Shader.Define(self.stage, shd_path)
+                    surface.CreateIdAttr("ND_standard_surface_surfaceshader")
+                    
+                    # Create standard surface outputs
+                    surface_output = surface.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+                    mtl_output = material.CreateSurfaceOutput(renderContext="mtlx")
+                    mtl_output.ConnectToSource(surface_output)
 
-                    try:
-                        registry = Sdr.Registry()
-                        node = registry.GetShaderNodeByIdentifier("ND_standard_surface_surfaceshader")
-                        if node:
-                            for input_name in node.GetInputNames():
-                                prop = node.GetInput(input_name)
-                                sdf_type, _ = prop.GetTypeAsSdfType()
-                                mtl_in = material.CreateInput(input_name, sdf_type)
-                                shd_in = shader.CreateInput(input_name, sdf_type)
-                                shd_in.ConnectToSource(mtl_in)
-                    except Exception as e:
-                        print(f"DEBUG: Sdr discovery failed: {e}")
+                    # Create all standard inputs
+                    for ch_name, ch_type in STANDARD_SURFACE_CHANNELS:
+                        surface.CreateInput(ch_name, ch_type)
+
         self.refresh_outliner()
 
     def _on_selection_changed(self):
@@ -373,7 +447,14 @@ class PublishPage(QWidget):
         prim_path = item.data(0, Qt.ItemDataRole.UserRole)
         if self.stage:
             prim = self.stage.GetPrimAtPath(prim_path)
-            if prim and (prim.IsA(UsdShade.Material) or prim.IsA(UsdShade.Shader)):
+            # Property editor handles the child shader of the material
+            if prim and prim.IsA(UsdShade.Material):
+                shader_prim = prim.GetChild("shader")
+                if shader_prim:
+                    self.prop_editor.load_prim(shader_prim)
+                else:
+                    self.prop_editor.clear_editor()
+            elif prim and prim.IsA(UsdShade.Shader):
                 self.prop_editor.load_prim(prim)
             else:
                 self.prop_editor.clear_editor()
@@ -398,8 +479,6 @@ class PublishPage(QWidget):
         """Simple OBJ parser supporting groups and direct vertex transformation."""
         vertices = []
         obj_normals = []
-        
-        # Bucket face data by group
         current_group = "default"
         groups = {current_group: {"indices": [], "counts": [], "normals": []}}
         
@@ -423,7 +502,6 @@ class PublishPage(QWidget):
                     line = line.strip()
                     if not line or line.startswith('#'): continue
                     parts = line.split()
-                    
                     if parts[0] == 'v':
                         p = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
                         vertices.append(Gf.Vec3f(total_mat.Transform(p)))
@@ -440,20 +518,11 @@ class PublishPage(QWidget):
                         for p in parts[1:]:
                             v_idx = int(p.split('/')[0])
                             face_v_indices.append(v_idx - 1)
-                        
                         g_data = groups[current_group]
-                        
-                        # Recalculate face normal if enabled (BEFORE reversing winding)
                         if recalc_normals and len(face_v_indices) >= 3:
-                            v0 = vertices[face_v_indices[0]]
-                            v1 = vertices[face_v_indices[1]]
-                            v2 = vertices[face_v_indices[2]]
-                            normal = Gf.Cross(v1-v0, v2-v0).GetNormalized()
-                            g_data["normals"].append(normal)
-                        
-                        # FORCE CLOCKWISE WINDING
+                            v0, v1, v2 = vertices[face_v_indices[0]], vertices[face_v_indices[1]], vertices[face_v_indices[2]]
+                            g_data["normals"].append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
                         face_v_indices.reverse()
-                        
                         g_data["counts"].append(len(face_v_indices))
                         g_data["indices"].extend(face_v_indices)
             
@@ -465,32 +534,23 @@ class PublishPage(QWidget):
 
             subdiv_scheme = "catmullClark"
             if self.settings:
-                obj_settings = self.settings.get_obj_import_settings()
-                if not obj_settings.get("subdivision", False):
+                if not self.settings.get_obj_import_settings().get("subdivision", False):
                     subdiv_scheme = "none"
 
             for group_name, g_data in groups.items():
                 if not g_data["indices"]: continue
-                
-                mesh_path = f"/main/{group_name}"
-                mesh = UsdGeom.Mesh.Define(temp_stage, mesh_path)
+                mesh = UsdGeom.Mesh.Define(temp_stage, f"/main/{group_name}")
                 mesh.CreatePointsAttr(vertices)
                 mesh.CreateFaceVertexIndicesAttr(g_data["indices"])
                 mesh.CreateFaceVertexCountsAttr(g_data["counts"])
                 mesh.CreateOrientationAttr(UsdGeom.Tokens.leftHanded)
                 mesh.CreateSubdivisionSchemeAttr(subdiv_scheme)
-
-                # Apply Normals
                 if recalc_normals or not obj_normals:
-                    # If recalc was off but no normals in file, we need to ensure we have them
                     if not g_data["normals"]:
                         for i in range(0, len(g_data["indices"]), 3):
                             if i+2 < len(g_data["indices"]):
-                                v0 = vertices[g_data["indices"][i]]
-                                v1 = vertices[g_data["indices"][i+1]]
-                                v2 = vertices[g_data["indices"][i+2]]
+                                v0, v1, v2 = vertices[g_data["indices"][i]], vertices[g_data["indices"][i+1]], vertices[g_data["indices"][i+2]]
                                 g_data["normals"].append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
-                    
                     mesh.CreateNormalsAttr(g_data["normals"])
                     mesh.SetNormalsInterpolation(UsdGeom.Tokens.uniform)
                 else:
@@ -601,21 +661,14 @@ class PublishPage(QWidget):
             for slot in self.drop_slots:
                 index_layer = self.slot_index_layers.get(slot.slot_name)
                 if not index_layer: continue
-                
                 clean_name = slot.slot_name.lower().replace(" ", "_")
                 slot_dir = os.path.join(asset_dir, clean_name)
                 os.makedirs(slot_dir, exist_ok=True)
-                
                 if slot.slot_type == "payload":
                     payload_layer = self.slot_payload_layers.get(slot.slot_name)
                     if payload_layer:
                         payload_filename = "payload.usd"
                         payload_layer.Export(os.path.join(slot_dir, payload_filename))
-                        # The anonymous index_layer already has a payload to the anonymous payload_layer.
-                        # We need to update that reference to be relative for the exported files.
-                        # However, since we are exporting the anonymous layers 'as they are', 
-                        # the index_layer will still point to the anonymous payload ID.
-                        # We MUST fix the payload path in the exported index layer.
                         temp_stage = Usd.Stage.Open(index_layer)
                         scope_prim = temp_stage.GetPrimAtPath(f"/main/{slot.slot_name}")
                         if scope_prim:
@@ -624,28 +677,20 @@ class PublishPage(QWidget):
                         temp_stage.GetRootLayer().Export(os.path.join(slot_dir, "index.usda"))
                 else:
                     index_layer.Export(os.path.join(slot_dir, "index.usda"))
-
                 final_sublayers.append(f"{clean_name}/index.usda")
-            
-            # Create root index stage
             root_stage = Usd.Stage.CreateNew(os.path.join(asset_dir, "index.usda"))
             root_main = root_stage.DefinePrim("/main")
             root_stage.SetDefaultPrim(root_main)
-            
-            # Apply root metadata
             if self.settings:
                 UsdGeom.SetStageUpAxis(root_stage, self.settings.get_up_axis())
                 UsdGeom.SetStageMetersPerUnit(root_stage, self.settings.get_meters_per_unit())
-                
             root_stage.GetRootLayer().subLayerPaths = final_sublayers
             root_stage.Save()
-            
             QMessageBox.information(self, "Success", f"Asset '{name}' published.")
         except Exception as e:
             import traceback; traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Publish failed: {str(e)}")
             return
-        
         self.publish_requested.emit(name)
         self.rebuild_slots(self.settings.get_slots())
         self.name_input.clear()
