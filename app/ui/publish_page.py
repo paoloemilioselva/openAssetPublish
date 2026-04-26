@@ -79,8 +79,21 @@ class MaterialPropertyEditor(QScrollArea):
         if not prim: return
         self.current_prim = prim
         
+        # If it's a material, find its surface shader
+        if prim.IsA(UsdShade.Material):
+            material = UsdShade.Material(prim)
+            surface_out = material.GetSurfaceOutput("mtlx")
+            if surface_out:
+                source, _, _ = surface_out.GetConnectedSource()
+                if source:
+                    prim = source.GetPrim()
+
         shader = UsdShade.Shader(prim)
-        if not shader: return
+        if not shader:
+            label = QLabel("No editable shader found.")
+            label.setStyleSheet("color: #888; font-style: italic;")
+            self.layout.addRow(label)
+            return
 
         inputs = sorted(shader.GetInputs(), key=lambda x: x.GetBaseName())
         for shader_input in inputs:
@@ -447,14 +460,8 @@ class PublishPage(QWidget):
         prim_path = item.data(0, Qt.ItemDataRole.UserRole)
         if self.stage:
             prim = self.stage.GetPrimAtPath(prim_path)
-            # Property editor handles the child shader of the material
-            if prim and prim.IsA(UsdShade.Material):
-                shader_prim = prim.GetChild("shader")
-                if shader_prim:
-                    self.prop_editor.load_prim(shader_prim)
-                else:
-                    self.prop_editor.clear_editor()
-            elif prim and prim.IsA(UsdShade.Shader):
+            if prim:
+                print(f"DEBUG: Selected Prim: {prim_path} ({prim.GetTypeName()})")
                 self.prop_editor.load_prim(prim)
             else:
                 self.prop_editor.clear_editor()
