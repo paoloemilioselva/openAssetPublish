@@ -292,17 +292,12 @@ class PublishPage(QWidget):
         self.outliner.itemSelectionChanged.connect(self._on_selection_changed)
         self.mid_layout.addWidget(self.outliner_label)
         self.mid_layout.addWidget(self.outliner)
-        
-        mtl_btn_layout = QHBoxLayout()
+        # Material Control Bar
         self.create_mtl_btn = QPushButton("Create New Material")
         self.create_mtl_btn.setObjectName("PublishButton")
         self.create_mtl_btn.setMinimumHeight(40)
         self.create_mtl_btn.clicked.connect(self.create_material)
-        self.slot_selector = QComboBox()
-        self.slot_selector.setMinimumHeight(40)
-        mtl_btn_layout.addWidget(self.create_mtl_btn, 2)
-        mtl_btn_layout.addWidget(self.slot_selector, 1)
-        self.mid_layout.addLayout(mtl_btn_layout)
+        self.mid_layout.addWidget(self.create_mtl_btn)
         
         self.right_panel = QFrame()
         self.right_panel.setObjectName("PublishPanel")
