@@ -66,6 +66,7 @@ class MaterialPropertyEditor(QScrollArea):
         self.layout.setSpacing(10)
         self.setWidget(self.container)
         self.current_prim = None
+        self.edit_layer = None
 
     def clear_editor(self):
         while self.layout.count():
@@ -73,13 +74,15 @@ class MaterialPropertyEditor(QScrollArea):
             if item.widget():
                 item.widget().deleteLater()
         self.current_prim = None
+        self.edit_layer = None
 
-    def load_prim(self, prim):
+    def load_prim(self, prim, edit_layer=None):
         self.clear_editor()
         if not prim: return
         if not prim.IsA(UsdShade.Material): return
 
         self.current_prim = UsdShade.Material(prim)
+        self.edit_layer = edit_layer
         
         # Get inputs directly from the prim (Material or Shader)
         inputs = self.current_prim.GetInputs()
@@ -208,11 +211,21 @@ class MaterialPropertyEditor(QScrollArea):
         color = QColorDialog.getColor(initial, self, "Select Color")
         if color.isValid():
             button.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
-            shader_input.Set(Gf.Vec3f(color.redF(), color.greenF(), color.blueF()))
+            stage = shader_input.GetPrim().GetStage()
+            if self.edit_layer:
+                with Usd.EditContext(stage, self.edit_layer):
+                    shader_input.Set(Gf.Vec3f(color.redF(), color.greenF(), color.blueF()))
+            else:
+                shader_input.Set(Gf.Vec3f(color.redF(), color.greenF(), color.blueF()))
             self.value_changed.emit()
 
     def _update_asset_path(self, shader_input, text):
-        shader_input.Set(Sdf.AssetPath(text))
+        stage = shader_input.GetPrim().GetStage()
+        if self.edit_layer:
+            with Usd.EditContext(stage, self.edit_layer):
+                shader_input.Set(Sdf.AssetPath(text))
+        else:
+            shader_input.Set(Sdf.AssetPath(text))
         self.value_changed.emit()
 
     def _browse_asset(self, shader_input, line_edit):
@@ -222,7 +235,12 @@ class MaterialPropertyEditor(QScrollArea):
             self._update_asset_path(shader_input, path)
 
     def _update_float(self, shader_input, value):
-        shader_input.Set(float(value))
+        stage = shader_input.GetPrim().GetStage()
+        if self.edit_layer:
+            with Usd.EditContext(stage, self.edit_layer):
+                shader_input.Set(float(value))
+        else:
+            shader_input.Set(float(value))
         self.value_changed.emit()
 
 class TexturePickerWidget(QWidget):
@@ -509,7 +527,8 @@ class PublishPage(QWidget):
         if self.stage:
             prim = self.stage.GetPrimAtPath(prim_path)
             if prim:
-                self.prop_editor.load_prim(prim)
+                mtl_layer = self.slot_index_layers.get("Materials")
+                self.prop_editor.load_prim(prim, edit_layer=mtl_layer)
             else:
                 self.prop_editor.clear_editor()
 
