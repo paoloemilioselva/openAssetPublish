@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame, 
     QPushButton, QTreeWidget, QTreeWidgetItem, QMessageBox, QScrollArea,
-    QColorDialog, QFileDialog, QDoubleSpinBox, QFormLayout, QComboBox
+    QColorDialog, QFileDialog, QDoubleSpinBox, QFormLayout, QComboBox,
+    QSplitter
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QTimer
 from PySide6.QtGui import QDrag, QColor, QFont
@@ -261,9 +262,13 @@ class PublishPage(QWidget):
         self.main_layout.setSpacing(20)
         self.settings = None 
         self.drop_slots = []
-        self.panels_layout = QHBoxLayout()
-        self.panels_layout.setSpacing(20)
         
+        # Resizable columns with QSplitter
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(10)
+        
+        # Left Panel
         self.left_panel = QFrame()
         self.left_panel.setObjectName("PublishPanel")
         self.left_layout = QVBoxLayout(self.left_panel)
@@ -279,6 +284,7 @@ class PublishPage(QWidget):
         self.left_layout.addLayout(self.slots_container_layout)
         self.left_layout.addStretch()
         
+        # Mid Panel
         self.mid_panel = QFrame()
         self.mid_panel.setObjectName("PublishPanel")
         self.mid_layout = QVBoxLayout(self.mid_panel)
@@ -292,6 +298,7 @@ class PublishPage(QWidget):
         self.outliner.itemSelectionChanged.connect(self._on_selection_changed)
         self.mid_layout.addWidget(self.outliner_label)
         self.mid_layout.addWidget(self.outliner)
+        
         # Material Control Bar
         self.create_mtl_btn = QPushButton("Create New Material")
         self.create_mtl_btn.setObjectName("PublishButton")
@@ -299,6 +306,7 @@ class PublishPage(QWidget):
         self.create_mtl_btn.clicked.connect(self.create_material)
         self.mid_layout.addWidget(self.create_mtl_btn)
         
+        # Right Panel
         self.right_panel = QFrame()
         self.right_panel.setObjectName("PublishPanel")
         self.right_layout = QVBoxLayout(self.right_panel)
@@ -310,10 +318,13 @@ class PublishPage(QWidget):
         self.right_layout.addWidget(self.prop_label)
         self.right_layout.addWidget(self.prop_editor)
 
-        self.panels_layout.addWidget(self.left_panel, 1)
-        self.panels_layout.addWidget(self.mid_panel, 1)
-        self.panels_layout.addWidget(self.right_panel, 1)
-        self.main_layout.addLayout(self.panels_layout)
+        # Assemble Splitter
+        self.splitter.addWidget(self.left_panel)
+        self.splitter.addWidget(self.mid_panel)
+        self.splitter.addWidget(self.right_panel)
+        self.splitter.setSizes([300, 400, 300])
+        
+        self.main_layout.addWidget(self.splitter)
         
         self.publish_btn = QPushButton("Publish Asset")
         self.publish_btn.setObjectName("PublishButton")
@@ -329,12 +340,7 @@ class PublishPage(QWidget):
         for slot in self.drop_slots:
             if slot.slot_name == "Materials":
                 index_layer = self.slot_index_layers.get(slot.slot_name)
-                #author_stage = Usd.Stage.Open(index_layer)
-
-                # send stage edits to a specific layer
                 with Usd.EditContext(self.stage, index_layer):
-
-                    # Unique material name under the slot scope
                     idx = 1
                     while index_layer.GetPrimAtPath(f"/main/{slot.slot_name}/mtl_{idx:02d}"): idx += 1
                     mtl_name = f"mtl_{idx:02d}"
@@ -344,20 +350,7 @@ class PublishPage(QWidget):
                     shd_path = mtl_path.AppendChild("shader")
                     shader = UsdShade.Shader.Define(self.stage, shd_path)
                     shader.CreateIdAttr("ND_standard_surface_surfaceshader")
-                    
-                    # Surface Output connection
                     material.CreateSurfaceOutput("mtlx").ConnectToSource(shader.ConnectableAPI(), "surface")
-
-                    #registry = Sdr.Registry()
-                    #node = registry.GetShaderNodeByIdentifier("ND_standard_surface_surfaceshader")
-                    #if node:
-                    #    for input_name in node.GetInputNames():
-                    #        prop = node.GetInput(input_name)
-                    #        sdf_type = prop.GetTypeAsSdfType()[0]
-                    #        mtl_in = material.CreateInput(input_name, sdf_type)
-                    #        shd_in = shader.CreateInput(input_name, sdf_type)
-                    #        shd_in.ConnectToSource(mtl_in)
-
         self.refresh_outliner()
 
     def _on_selection_changed(self):
@@ -393,16 +386,13 @@ class PublishPage(QWidget):
     def on_file_dropped(self, file_path):
         slot = self.sender()
         if not slot: return
-        # Flatten the dropped file to ensure all its layers are combined
         source_layer = UsdUtils.FlattenLayerStack(Usd.Stage.Open(file_path))
         if not source_layer: return
-        
         if slot.slot_type == "payload":
             payload_layer = self.slot_payload_layers.get(slot.slot_name)
             if payload_layer:
                 with Sdf.ChangeBlock():
                     payload_layer.Clear()
-                    # dropped layer will have /main prim
                     payload_layer.TransferContent(source_layer)
         else:
             index_layer = self.slot_index_layers.get(slot.slot_name)
@@ -410,38 +400,28 @@ class PublishPage(QWidget):
                 with Sdf.ChangeBlock():
                     index_layer.Clear()
                     index_layer.TransferContent(source_layer)
-        
         self.refresh_outliner()
 
     def _create_new_stage(self):
         self.stage = Usd.Stage.CreateInMemory()
         UsdGeom.Xform.Define(self.stage, "/main")
         self.stage.SetDefaultPrim(self.stage.GetPrimAtPath("/main"))
-        
         self.slot_index_layers = {}
         self.slot_payload_layers = {}
 
         for slot in self.drop_slots:
             index_layer = Sdf.Layer.CreateAnonymous(f"{slot.slot_name}/index.usda")
             self.slot_index_layers[slot.slot_name] = index_layer
-
-            # every slot is sublayered
             self.stage.GetRootLayer().subLayerPaths.append(index_layer.identifier)
 
-            # only the payload slot will have a subfolder and sub-file for payload data
             if slot.slot_type == "payload":
                 payload_layer = Sdf.Layer.CreateAnonymous(f"{slot.slot_name}/payload.usd")
                 self.slot_payload_layers[slot.slot_name] = payload_layer
-                # every payload will have a /main prim
                 Sdf.CreatePrimInLayer(payload_layer, "/main")
                 payload_layer.defaultPrim = "main"
-                
-                # send edit to a specific layer
                 with Usd.EditContext(self.stage, index_layer):
-                    # Payload main -> index layer
                     scope_prim = self.stage.DefinePrim(f"/main/{slot.slot_name}", "Scope")
                     scope_prim.GetPayloads().AddPayload(Sdf.Payload(payload_layer.identifier, "/main"))
-
         self.refresh_outliner()
 
     def bind_material(self, mat_path, target_path):
@@ -459,7 +439,6 @@ class PublishPage(QWidget):
         self.outliner.blockSignals(True)
         self.outliner.clear()
         if self.stage:
-            # Start traversal from the main prim
             main_prim = self.stage.GetPrimAtPath("/main")
             if main_prim:
                 print(f"DEBUG: Found main prim, starting traversal. Children: {len(main_prim.GetChildren())}")
