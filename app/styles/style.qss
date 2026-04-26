@@ -1,0 +1,141 @@
+/* Main Window styling */
+QMainWindow {
+    background-color: #1e1e1e;
+}
+
+/* Central Widget styling */
+QWidget#CentralWidget {
+    background-color: #1e1e1e;
+}
+
+/* Sidebar styling */
+QWidget#Sidebar {
+    background-color: #252526;
+    border-right: 1px solid #3c3c3c;
+    min-width: 200px;
+    max-width: 200px;
+}
+
+/* Sidebar buttons */
+QPushButton#SidebarButton {
+    background-color: transparent;
+    color: #cccccc;
+    border: none;
+    padding: 10px 20px;
+    text-align: left;
+    font-size: 14px;
+}
+
+QPushButton#SidebarButton:hover {
+    background-color: #37373d;
+    color: #ffffff;
+}
+
+QPushButton#SidebarButton:checked {
+    background-color: #37373d;
+    color: #ffffff;
+    border-left: 2px solid #007acc;
+}
+
+/* Labels */
+QLabel {
+    color: #ffffff;
+}
+
+/* Inputs */
+QLineEdit#AssetNameInput {
+    background-color: #3c3c3c;
+    color: #ffffff;
+    border: 1px solid #555555;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+QLineEdit#AssetNameInput:focus {
+    border: 1px solid #007acc;
+}
+
+/* Drop Slot */
+QFrame#DropSlot {
+    background-color: #2d2d2d;
+    border: 2px dashed #444444;
+    border-radius: 8px;
+}
+
+QFrame#DropSlot[dragging="true"] {
+    background-color: #3d3d3d;
+    border: 2px dashed #007acc;
+}
+
+/* Publish Panels */
+QFrame#PublishPanel {
+    background-color: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+}
+
+/* Outliner styling */
+QTreeWidget#Outliner {
+    background-color: #1e1e1e;
+    color: #cccccc;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+}
+
+QTreeWidget#Outliner::item:hover {
+    background-color: #2a2d2e;
+}
+
+QTreeWidget#Outliner::item:selected {
+    background-color: #37373d;
+    color: #ffffff;
+}
+
+/* Library Styling */
+QScrollArea#LibraryScrollArea {
+    border: none;
+    background-color: transparent;
+}
+
+QFrame#AssetCard {
+    background-color: #2d2d2d;
+    border: 1px solid #3c3c3c;
+    border-radius: 8px;
+}
+
+QFrame#AssetCard:hover {
+    border: 1px solid #007acc;
+    background-color: #37373d;
+}
+
+QLabel#AssetPreview {
+    background-color: #1e1e1e;
+    border-radius: 4px;
+    color: #555555;
+    font-weight: bold;
+}
+
+QLabel#AssetTitle {
+    color: #ffffff;
+    font-weight: bold;
+    font-size: 13px;
+}
+
+/* Publish Button */
+QPushButton#PublishButton {
+    background-color: #007acc;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+QPushButton#PublishButton:hover {
+    background-color: #0098ff;
+}
+
+QPushButton#PublishButton:pressed {
+    background-color: #005c99;
+}

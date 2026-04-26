@@ -1,0 +1,17 @@
+{
+    "library_path": "C:/Users/paolo/Desktop/openscene/assets",
+    "slots": [
+        {
+            "name": "Bindings",
+            "type": "sublayer"
+        },
+        {
+            "name": "Materials",
+            "type": "payload"
+        },
+        {
+            "name": "Geometry",
+            "type": "payload"
+        }
+    ]
+}
