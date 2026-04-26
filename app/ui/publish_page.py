@@ -349,7 +349,7 @@ class PublishPage(QWidget):
                     material = UsdShade.Material.Define(self.stage, mtl_path)
                     shd_path = mtl_path.AppendChild("shader")
                     shader = UsdShade.Shader.Define(self.stage, shd_path)
-                    # Surface Output connection
+                    shader.CreateIdAttr("ND_standard_surface_surfaceshader")
                     material.CreateSurfaceOutput("mtlx").ConnectToSource(shader.ConnectableAPI(), "surface")
 
                     try:
@@ -399,13 +399,31 @@ class PublishPage(QWidget):
     def on_file_dropped(self, file_path):
         slot = self.sender()
         if not slot: return
-        source_layer = UsdUtils.FlattenLayerStack(Usd.Stage.Open(file_path))
+        
+        # Handle OBJ files by parsing them into a temporary USD stage first
+        is_obj = file_path.lower().endswith(".obj")
+        
+        try:
+            if is_obj:
+                # USD can often open OBJ files directly if the plugin is available
+                temp_stage = Usd.Stage.Open(file_path)
+                source_layer = UsdUtils.FlattenLayerStack(temp_stage)
+            else:
+                # Standard USD flattening for regular drops
+                source_layer = UsdUtils.FlattenLayerStack(Usd.Stage.Open(file_path))
+        except Exception as e:
+            print(f"DEBUG: Failed to parse dropped file '{file_path}': {e}")
+            QMessageBox.critical(self, "Import Error", f"Could not parse file: {file_path}\n{e}")
+            return
+
         if not source_layer: return
+        
         if slot.slot_type == "payload":
             payload_layer = self.slot_payload_layers.get(slot.slot_name)
             if payload_layer:
                 with Sdf.ChangeBlock():
                     payload_layer.Clear()
+                    # dropped layer will have /main prim
                     payload_layer.TransferContent(source_layer)
         else:
             index_layer = self.slot_index_layers.get(slot.slot_name)
@@ -413,6 +431,7 @@ class PublishPage(QWidget):
                 with Sdf.ChangeBlock():
                     index_layer.Clear()
                     index_layer.TransferContent(source_layer)
+        
         self.refresh_outliner()
 
     def _create_new_stage(self):
@@ -461,7 +480,6 @@ class PublishPage(QWidget):
         self.outliner.blockSignals(True)
         self.outliner.clear()
         if self.stage:
-            # Start traversal from the main prim
             main_prim = self.stage.GetPrimAtPath("/main")
             if main_prim:
                 print(f"DEBUG: Found main prim, starting traversal. Children: {len(main_prim.GetChildren())}")
