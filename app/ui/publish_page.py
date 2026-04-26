@@ -395,12 +395,13 @@ class PublishPage(QWidget):
         self._create_new_stage()
 
     def _parse_obj(self, file_path):
-        """Simple OBJ parser to create a USD Mesh with direct vertex transformation and CW winding."""
+        """Simple OBJ parser supporting groups and direct vertex transformation."""
         vertices = []
         obj_normals = []
-        face_indices = []
-        face_counts = []
-        face_normals = []
+        
+        # Bucket face data by group
+        current_group = "default"
+        groups = {current_group: {"indices": [], "counts": [], "normals": []}}
         
         obj_settings = {"rotation": [0,0,0], "scale": 1.0, "recalc_normals": False}
         if self.settings:
@@ -422,17 +423,25 @@ class PublishPage(QWidget):
                     line = line.strip()
                     if not line or line.startswith('#'): continue
                     parts = line.split()
+                    
                     if parts[0] == 'v':
                         p = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
                         vertices.append(Gf.Vec3f(total_mat.Transform(p)))
                     elif parts[0] == 'vn':
                         n = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
                         obj_normals.append(Gf.Vec3f(total_mat.TransformDir(n).GetNormalized()))
+                    elif parts[0] == 'g':
+                        name = parts[1] if len(parts) > 1 else "group"
+                        current_group = Tf.MakeValidIdentifier(name)
+                        if current_group not in groups:
+                            groups[current_group] = {"indices": [], "counts": [], "normals": []}
                     elif parts[0] == 'f':
                         face_v_indices = []
                         for p in parts[1:]:
                             v_idx = int(p.split('/')[0])
                             face_v_indices.append(v_idx - 1)
+                        
+                        g_data = groups[current_group]
                         
                         # Recalculate face normal if enabled (BEFORE reversing winding)
                         if recalc_normals and len(face_v_indices) >= 3:
@@ -440,13 +449,13 @@ class PublishPage(QWidget):
                             v1 = vertices[face_v_indices[1]]
                             v2 = vertices[face_v_indices[2]]
                             normal = Gf.Cross(v1-v0, v2-v0).GetNormalized()
-                            face_normals.append(normal)
+                            g_data["normals"].append(normal)
                         
                         # FORCE CLOCKWISE WINDING
                         face_v_indices.reverse()
                         
-                        face_counts.append(len(face_v_indices))
-                        face_indices.extend(face_v_indices)
+                        g_data["counts"].append(len(face_v_indices))
+                        g_data["indices"].extend(face_v_indices)
             
             temp_stage = Usd.Stage.CreateInMemory()
             UsdGeom.Xform.Define(temp_stage, "/main")
@@ -454,33 +463,39 @@ class PublishPage(QWidget):
                 UsdGeom.SetStageUpAxis(temp_stage, self.settings.get_up_axis())
                 UsdGeom.SetStageMetersPerUnit(temp_stage, self.settings.get_meters_per_unit())
 
-            mesh = UsdGeom.Mesh.Define(temp_stage, "/main/mesh")
-            mesh.CreatePointsAttr(vertices)
-            mesh.CreateFaceVertexIndicesAttr(face_indices)
-            mesh.CreateFaceVertexCountsAttr(face_counts)
-            
-            # SET CLOCKWISE ORIENTATION
-            mesh.CreateOrientationAttr(UsdGeom.Tokens.leftHanded)
-
-            if recalc_normals or not obj_normals:
-                if not face_normals:
-                    for i in range(0, len(face_indices), 3):
-                        if i+2 < len(face_indices):
-                            # Calculate using reversed (CW) indices
-                            v0, v1, v2 = vertices[face_indices[i]], vertices[face_indices[i+1]], vertices[face_indices[i+2]]
-                            face_normals.append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
-                mesh.CreateNormalsAttr(face_normals)
-                mesh.SetNormalsInterpolation(UsdGeom.Tokens.uniform)
-            else:
-                mesh.CreateNormalsAttr(obj_normals)
-                mesh.SetNormalsInterpolation(UsdGeom.Tokens.varying)
-
             subdiv_scheme = "catmullClark"
             if self.settings:
                 obj_settings = self.settings.get_obj_import_settings()
                 if not obj_settings.get("subdivision", False):
                     subdiv_scheme = "none"
-            mesh.CreateSubdivisionSchemeAttr(subdiv_scheme)
+
+            for group_name, g_data in groups.items():
+                if not g_data["indices"]: continue
+                
+                mesh_path = f"/main/{group_name}"
+                mesh = UsdGeom.Mesh.Define(temp_stage, mesh_path)
+                mesh.CreatePointsAttr(vertices)
+                mesh.CreateFaceVertexIndicesAttr(g_data["indices"])
+                mesh.CreateFaceVertexCountsAttr(g_data["counts"])
+                mesh.CreateOrientationAttr(UsdGeom.Tokens.leftHanded)
+                mesh.CreateSubdivisionSchemeAttr(subdiv_scheme)
+
+                # Apply Normals
+                if recalc_normals or not obj_normals:
+                    # If recalc was off but no normals in file, we need to ensure we have them
+                    if not g_data["normals"]:
+                        for i in range(0, len(g_data["indices"]), 3):
+                            if i+2 < len(g_data["indices"]):
+                                v0 = vertices[g_data["indices"][i]]
+                                v1 = vertices[g_data["indices"][i+1]]
+                                v2 = vertices[g_data["indices"][i+2]]
+                                g_data["normals"].append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
+                    
+                    mesh.CreateNormalsAttr(g_data["normals"])
+                    mesh.SetNormalsInterpolation(UsdGeom.Tokens.uniform)
+                else:
+                    mesh.CreateNormalsAttr(obj_normals)
+                    mesh.SetNormalsInterpolation(UsdGeom.Tokens.varying)
 
             temp_stage.SetDefaultPrim(temp_stage.GetPrimAtPath("/main"))
             return UsdUtils.FlattenLayerStack(temp_stage)
