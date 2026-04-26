@@ -107,8 +107,11 @@ class SettingsPage(QWidget):
         self.toggles_layout = QHBoxLayout()
         self.preview_cb = QCheckBox("Preview after Import")
         self.subdiv_cb = QCheckBox("Enable Subdivision")
+        self.recalc_normals_cb = QCheckBox("Recalculate Normals")
+        
         self.toggles_layout.addWidget(self.preview_cb)
         self.toggles_layout.addWidget(self.subdiv_cb)
+        self.toggles_layout.addWidget(self.recalc_normals_cb)
         self.toggles_layout.addStretch()
 
         self.obj_layout.addWidget(self.obj_title)
@@ -189,6 +192,7 @@ class SettingsPage(QWidget):
                     self.scale_input.setValue(obj_settings.get("scale", 1.0))
                     self.preview_cb.setChecked(obj_settings.get("preview", True))
                     self.subdiv_cb.setChecked(obj_settings.get("subdivision", False))
+                    self.recalc_normals_cb.setChecked(obj_settings.get("recalc_normals", False))
                     
                     slots = config.get("slots", default_slots)
                     for s in slots:
@@ -212,6 +216,7 @@ class SettingsPage(QWidget):
         self.scale_input.setValue(1.0)
         self.preview_cb.setChecked(True)
         self.subdiv_cb.setChecked(False)
+        self.recalc_normals_cb.setChecked(False)
         for s in slots:
             self.add_slot_row(s["name"], s["type"])
 
@@ -224,7 +229,8 @@ class SettingsPage(QWidget):
             "rotation": [self.rot_x.value(), self.rot_y.value(), self.rot_z.value()],
             "scale": self.scale_input.value(),
             "preview": self.preview_cb.isChecked(),
-            "subdivision": self.subdiv_cb.isChecked()
+            "subdivision": self.subdiv_cb.isChecked(),
+            "recalc_normals": self.recalc_normals_cb.isChecked()
         }
         try:
             with open(self.config_path, 'w') as f:
@@ -264,7 +270,8 @@ class SettingsPage(QWidget):
             "rotation": [self.rot_x.value(), self.rot_y.value(), self.rot_z.value()],
             "scale": self.scale_input.value(),
             "preview": self.preview_cb.isChecked(),
-            "subdivision": self.subdiv_cb.isChecked()
+            "subdivision": self.subdiv_cb.isChecked(),
+            "recalc_normals": self.recalc_normals_cb.isChecked()
         }
 
     def get_slots(self):

@@ -263,10 +263,12 @@ class PublishPage(QWidget):
         self.settings = None 
         self.drop_slots = []
         
+        # Resizable columns with QSplitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setHandleWidth(10)
         
+        # Left Panel
         self.left_panel = QFrame()
         self.left_panel.setObjectName("PublishPanel")
         self.left_layout = QVBoxLayout(self.left_panel)
@@ -282,6 +284,7 @@ class PublishPage(QWidget):
         self.left_layout.addLayout(self.slots_container_layout)
         self.left_layout.addStretch()
         
+        # Mid Panel
         self.mid_panel = QFrame()
         self.mid_panel.setObjectName("PublishPanel")
         self.mid_layout = QVBoxLayout(self.mid_panel)
@@ -296,12 +299,14 @@ class PublishPage(QWidget):
         self.mid_layout.addWidget(self.outliner_label)
         self.mid_layout.addWidget(self.outliner)
         
+        # Material Control Bar
         self.create_mtl_btn = QPushButton("Create New Material")
         self.create_mtl_btn.setObjectName("PublishButton")
         self.create_mtl_btn.setMinimumHeight(40)
         self.create_mtl_btn.clicked.connect(self.create_material)
         self.mid_layout.addWidget(self.create_mtl_btn)
         
+        # Right Panel
         self.right_panel = QFrame()
         self.right_panel.setObjectName("PublishPanel")
         self.right_layout = QVBoxLayout(self.right_panel)
@@ -313,10 +318,12 @@ class PublishPage(QWidget):
         self.right_layout.addWidget(self.prop_label)
         self.right_layout.addWidget(self.prop_editor)
 
+        # Assemble Splitter
         self.splitter.addWidget(self.left_panel)
         self.splitter.addWidget(self.mid_panel)
         self.splitter.addWidget(self.right_panel)
         self.splitter.setSizes([300, 400, 300])
+        
         self.main_layout.addWidget(self.splitter)
         
         self.publish_btn = QPushButton("Publish Asset")
@@ -392,17 +399,19 @@ class PublishPage(QWidget):
     def _parse_obj(self, file_path):
         """Simple OBJ parser to create a USD Mesh with direct vertex transformation."""
         vertices = []
+        obj_normals = []
         face_indices = []
         face_counts = []
+        face_normals = []
         
-        obj_settings = {"rotation": [0,0,0], "scale": 1.0}
+        obj_settings = {"rotation": [0,0,0], "scale": 1.0, "recalc_normals": False}
         if self.settings:
             obj_settings = self.settings.get_obj_import_settings()
         
         rot_values = obj_settings["rotation"]
         scale_mult = obj_settings["scale"]
+        recalc_normals = obj_settings["recalc_normals"]
         
-        # COMPOSE TRANSFORMATION MATRIX CORRECTLY
         total_mat = Gf.Matrix4d(1.0)
         total_mat *= Gf.Matrix4d().SetScale(Gf.Vec3d(scale_mult, scale_mult, scale_mult))
         total_mat *= Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1,0,0), rot_values[0]))
@@ -417,8 +426,12 @@ class PublishPage(QWidget):
                     parts = line.split()
                     if parts[0] == 'v':
                         p = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
-                        p_transformed = total_mat.Transform(p)
-                        vertices.append(Gf.Vec3f(p_transformed))
+                        vertices.append(Gf.Vec3f(total_mat.Transform(p)))
+                    elif parts[0] == 'vn':
+                        # OBJ normals are vectors, transform differently than points
+                        # For simple rotation/uniform scale, TransformDir is fine.
+                        n = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
+                        obj_normals.append(Gf.Vec3f(total_mat.TransformDir(n).GetNormalized()))
                     elif parts[0] == 'f':
                         face_v_indices = []
                         for p in parts[1:]:
@@ -426,6 +439,14 @@ class PublishPage(QWidget):
                             face_v_indices.append(v_idx - 1)
                         face_counts.append(len(face_v_indices))
                         face_indices.extend(face_v_indices)
+                        
+                        # Recalculate face normal if enabled
+                        if recalc_normals and len(face_v_indices) >= 3:
+                            v0 = vertices[face_v_indices[0]]
+                            v1 = vertices[face_v_indices[1]]
+                            v2 = vertices[face_v_indices[2]]
+                            normal = Gf.Cross(v1-v0, v2-v0).GetNormalized()
+                            face_normals.append(normal)
             
             temp_stage = Usd.Stage.CreateInMemory()
             UsdGeom.Xform.Define(temp_stage, "/main")
@@ -438,15 +459,26 @@ class PublishPage(QWidget):
             mesh.CreateFaceVertexIndicesAttr(face_indices)
             mesh.CreateFaceVertexCountsAttr(face_counts)
 
+            # Apply Normals
+            if recalc_normals or not obj_normals:
+                if not face_normals: # Fallback if no faces were processed
+                    for i in range(0, len(face_indices), 3):
+                        if i+2 < len(face_indices):
+                            v0, v1, v2 = vertices[face_indices[i]], vertices[face_indices[i+1]], vertices[face_indices[i+2]]
+                            face_normals.append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
+                mesh.CreateNormalsAttr(face_normals)
+                mesh.SetNormalsInterpolation(UsdGeom.Tokens.uniform)
+            else:
+                mesh.CreateNormalsAttr(obj_normals)
+                mesh.SetNormalsInterpolation(UsdGeom.Tokens.varying)
+
             # Apply Subdivision Settings
             subdiv_scheme = "catmullClark"
             if self.settings:
                 obj_settings = self.settings.get_obj_import_settings()
                 if not obj_settings.get("subdivision", False):
                     subdiv_scheme = "none"
-
             mesh.CreateSubdivisionSchemeAttr(subdiv_scheme)
-            print(f"DEBUG: OBJ Mesh Subdivision Scheme: {subdiv_scheme}")
 
             temp_stage.SetDefaultPrim(temp_stage.GetPrimAtPath("/main"))
             return UsdUtils.FlattenLayerStack(temp_stage)
