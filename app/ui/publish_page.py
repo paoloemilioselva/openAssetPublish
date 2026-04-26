@@ -167,7 +167,12 @@ class DropSlot(QFrame):
         urls = event.mimeData().urls()
         if urls:
             self.file_path = urls[0].toLocalFile()
-            self.path_label.setText(self.file_path)
+            
+            # Truncate path to show only last 2 folders + filename
+            parts = os.path.normpath(self.file_path).split(os.sep)
+            display_path = os.sep.join(parts[-3:]) if len(parts) > 3 else self.file_path
+            
+            self.path_label.setText(display_path)
             self.path_label.setStyleSheet("color: #007acc; font-weight: bold; font-style: normal;")
             self.file_dropped.emit(self.file_path)
         self.setProperty("dragging", False)
