@@ -79,23 +79,21 @@ class MaterialPropertyEditor(QScrollArea):
         if not prim: return
         self.current_prim = prim
         
-        # If it's a material, find its surface shader
-        if prim.IsA(UsdShade.Material):
-            material = UsdShade.Material(prim)
-            surface_out = material.GetSurfaceOutput("mtlx")
-            if surface_out:
-                source, _, _ = surface_out.GetConnectedSource()
-                if source:
-                    prim = source.GetPrim()
-
-        shader = UsdShade.Shader(prim)
-        if not shader:
-            label = QLabel("No editable shader found.")
+        # Use ConnectableAPI to handle both Materials and Shaders
+        connectable = UsdShade.ConnectableAPI(prim)
+        if not connectable:
+            label = QLabel("Selected prim is not connectable.")
             label.setStyleSheet("color: #888; font-style: italic;")
             self.layout.addRow(label)
             return
 
-        inputs = sorted(shader.GetInputs(), key=lambda x: x.GetBaseName())
+        inputs = sorted(connectable.GetInputs(), key=lambda x: x.GetBaseName())
+        if not inputs:
+            label = QLabel("No inputs found on this prim.")
+            label.setStyleSheet("color: #888; font-style: italic;")
+            self.layout.addRow(label)
+            return
+
         for shader_input in inputs:
             widget = self._create_input_widget(shader_input)
             if widget:
@@ -103,13 +101,16 @@ class MaterialPropertyEditor(QScrollArea):
 
     def _create_input_widget(self, shader_input):
         # Check for existing texture connection
-        source, source_output_name, source_type = shader_input.GetConnectedSource()
-        if source:
+        sources = shader_input.GetConnectedSources()
+        if sources:
+            source, _, _ = sources[0]
             src_prim = source.GetPrim()
             if src_prim.IsA(UsdShade.Shader):
                 src_shader = UsdShade.Shader(src_prim)
                 if str(src_shader.GetIdAttr().Get()).startswith("ND_image"):
                     file_input = src_shader.GetInput("file")
+                    if not file_input:
+                        file_input = src_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
                     return self._create_texture_picker(file_input)
 
         # Standard value widget with "T" button
@@ -170,31 +171,40 @@ class MaterialPropertyEditor(QScrollArea):
         return container
 
     def _convert_to_texture(self, shader_input):
-        shader_prim = shader_input.GetPrim()
-        material_prim = shader_prim.GetParent()
+        prim = shader_input.GetPrim()
+        material_prim = prim if prim.IsA(UsdShade.Material) else prim.GetParent()
         if not material_prim.IsA(UsdShade.Material): return
         
-        stage = shader_prim.GetStage()
+        stage = prim.GetStage()
         input_name = shader_input.GetBaseName()
         sdf_type = shader_input.GetTypeName()
         
-        # Determine texture shader ID based on type
         tex_type_suffix = str(sdf_type).replace("3f", "3")
         tex_id = f"ND_image_{tex_type_suffix}"
         
         with Sdf.ChangeBlock():
-            # Create texture shader as sibling to the surface shader
+            # Create texture shader
             tex_path = material_prim.GetPath().AppendChild(f"tex_{input_name}")
             tex_shader = UsdShade.Shader.Define(stage, tex_path)
             tex_shader.CreateIdAttr(tex_id)
             tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
             tex_out = tex_shader.CreateOutput("out", sdf_type)
             
-            # Connect the input to the texture output
+            # Connect the selected input to the texture output
             shader_input.ConnectToSource(tex_out)
             
+            # If we are on a Material, also connect the underlying shader input to bypass the interface
+            if prim.IsA(UsdShade.Material):
+                surface_out = UsdShade.Material(prim).GetSurfaceOutput("mtlx")
+                if surface_out:
+                    sources = surface_out.GetConnectedSources()
+                    if sources:
+                        shader_prim = sources[0][0].GetPrim()
+                        shd_in = UsdShade.Shader(shader_prim).GetInput(input_name)
+                        if shd_in: shd_in.ConnectToSource(tex_out)
+            
         self.value_changed.emit()
-        self.load_prim(shader_prim)
+        self.load_prim(prim)
 
     def _open_color_picker(self, shader_input, button):
         val = shader_input.Get()
@@ -445,9 +455,11 @@ class PublishPage(QWidget):
                     mtl_output = material.CreateSurfaceOutput(renderContext="mtlx")
                     mtl_output.ConnectToSource(surface_output)
 
-                    # Create all standard inputs
+                    # Create promoted inputs on Material and connect Shader to them
                     for ch_name, ch_type in STANDARD_SURFACE_CHANNELS:
-                        surface.CreateInput(ch_name, ch_type)
+                        mtl_in = material.CreateInput(ch_name, ch_type)
+                        shd_in = surface.CreateInput(ch_name, ch_type)
+                        shd_in.ConnectToSource(mtl_in)
 
         self.refresh_outliner()
 
