@@ -351,6 +351,16 @@ class PublishPage(QWidget):
                     shader = UsdShade.Shader.Define(self.stage, shd_path)
                     shader.CreateIdAttr("ND_standard_surface_surfaceshader")
                     material.CreateSurfaceOutput("mtlx").ConnectToSource(shader.ConnectableAPI(), "surface")
+
+                    registry = Sdr.Registry()
+                    node = registry.GetShaderNodeByIdentifier("ND_standard_surface_surfaceshader")
+                    if node:
+                        for input_name in node.GetInputNames():
+                            prop = node.GetInput(input_name)
+                            sdf_type, _ = prop.GetTypeAsSdfType()
+                            mtl_in = material.CreateInput(input_name, sdf_type)
+                            shd_in = shader.CreateInput(input_name, sdf_type)
+                            shd_in.ConnectToSource(mtl_in)
         self.refresh_outliner()
 
     def _on_selection_changed(self):
