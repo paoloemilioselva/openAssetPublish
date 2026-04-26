@@ -396,23 +396,65 @@ class PublishPage(QWidget):
             self.drop_slots.append(slot)
         self._create_new_stage()
 
+    def _parse_obj(self, file_path):
+        """Simple OBJ parser to create a USD Mesh when native support is missing."""
+        vertices = []
+        face_indices = []
+        face_counts = []
+        
+        try:
+            with open(file_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    
+                    parts = line.split()
+                    if parts[0] == 'v':
+                        # Vertex: v x y z
+                        vertices.append(Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3])))
+                    elif parts[0] == 'f':
+                        # Face: f v1/vt1/vn1 v2/vt2/vn2 ...
+                        face_v_indices = []
+                        for p in parts[1:]:
+                            # OBJ is 1-based, USD is 0-based. Only take the vertex index part.
+                            v_idx = int(p.split('/')[0])
+                            face_v_indices.append(v_idx - 1)
+                        
+                        face_counts.append(len(face_v_indices))
+                        face_indices.extend(face_v_indices)
+            
+            # Create a temporary stage and mesh
+            temp_stage = Usd.Stage.CreateInMemory()
+            UsdGeom.Xform.Define(temp_stage, "/main")
+            mesh = UsdGeom.Mesh.Define(temp_stage, "/main/mesh")
+            mesh.CreatePointsAttr(vertices)
+            mesh.CreateFaceVertexIndicesAttr(face_indices)
+            mesh.CreateFaceVertexCountsAttr(face_counts)
+            
+            # Set default prim for flattening
+            temp_stage.SetDefaultPrim(temp_stage.GetPrimAtPath("/main"))
+            return UsdUtils.FlattenLayerStack(temp_stage)
+            
+        except Exception as e:
+            print(f"DEBUG: OBJ Parser failed: {e}")
+            raise e
+
     def on_file_dropped(self, file_path):
         slot = self.sender()
         if not slot: return
         
-        # Handle OBJ files by parsing them into a temporary USD stage first
         is_obj = file_path.lower().endswith(".obj")
         
         try:
             if is_obj:
-                # USD can often open OBJ files directly if the plugin is available
-                temp_stage = Usd.Stage.Open(file_path)
-                source_layer = UsdUtils.FlattenLayerStack(temp_stage)
+                print(f"DEBUG: Parsing OBJ file: {file_path}")
+                source_layer = self._parse_obj(file_path)
             else:
-                # Standard USD flattening for regular drops
+                print(f"DEBUG: Opening USD file: {file_path}")
                 source_layer = UsdUtils.FlattenLayerStack(Usd.Stage.Open(file_path))
         except Exception as e:
-            print(f"DEBUG: Failed to parse dropped file '{file_path}': {e}")
+            import traceback; traceback.print_exc()
             QMessageBox.critical(self, "Import Error", f"Could not parse file: {file_path}\n{e}")
             return
 
@@ -423,7 +465,6 @@ class PublishPage(QWidget):
             if payload_layer:
                 with Sdf.ChangeBlock():
                     payload_layer.Clear()
-                    # dropped layer will have /main prim
                     payload_layer.TransferContent(source_layer)
         else:
             index_layer = self.slot_index_layers.get(slot.slot_name)
