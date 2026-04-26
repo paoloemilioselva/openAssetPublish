@@ -2,13 +2,14 @@ import os
 import json
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QPushButton, 
-    QFileDialog, QFrame, QTableWidget, QTableWidgetItem, QComboBox, QHeaderView
+    QFileDialog, QFrame, QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
+    QDoubleSpinBox
 )
 from PySide6.QtCore import Qt, Signal
 
 class SettingsPage(QWidget):
     library_path_changed = Signal(str)
-    slots_changed = Signal(list) # List of dicts: {"name": str, "type": "payload"|"sublayer"}
+    slots_changed = Signal(list) 
 
     def __init__(self, config_path="config.json"):
         super().__init__()
@@ -21,12 +22,14 @@ class SettingsPage(QWidget):
         self.title.setStyleSheet("font-size: 24px; font-weight: bold;")
         self.layout.addWidget(self.title)
 
-        # Library Path Section
-        self.path_container = QFrame()
-        self.path_container.setObjectName("PublishPanel")
-        self.path_layout = QVBoxLayout(self.path_container)
-        self.path_layout.setContentsMargins(15, 15, 15, 15)
+        # Library and Metadata Section
+        self.top_container = QFrame()
+        self.top_container.setObjectName("PublishPanel")
+        self.top_layout = QVBoxLayout(self.top_container)
+        self.top_layout.setContentsMargins(15, 15, 15, 15)
+        self.top_layout.setSpacing(15)
 
+        # Library Path
         self.path_label = QLabel("Library Root Path")
         self.path_input_layout = QHBoxLayout()
         self.path_input = QLineEdit()
@@ -34,12 +37,35 @@ class SettingsPage(QWidget):
         self.browse_btn = QPushButton("Browse")
         self.browse_btn.setMinimumHeight(35)
         self.browse_btn.clicked.connect(self.browse_path)
-
         self.path_input_layout.addWidget(self.path_input)
         self.path_input_layout.addWidget(self.browse_btn)
-        self.path_layout.addWidget(self.path_label)
-        self.path_layout.addLayout(self.path_input_layout)
-        self.layout.addWidget(self.path_container)
+        self.top_layout.addWidget(self.path_label)
+        self.top_layout.addLayout(self.path_input_layout)
+
+        # Stage Metadata (Up Axis & Meters Per Unit)
+        self.metadata_layout = QHBoxLayout()
+        
+        self.up_axis_label = QLabel("Default Up Axis")
+        self.up_axis_combo = QComboBox()
+        self.up_axis_combo.addItems(["Y", "Z"])
+        self.up_axis_combo.setMinimumHeight(35)
+        
+        self.meters_label = QLabel("Meters Per Unit")
+        self.meters_input = QDoubleSpinBox()
+        self.meters_input.setRange(0.0001, 10000.0)
+        self.meters_input.setValue(1.0)
+        self.meters_input.setDecimals(4)
+        self.meters_input.setMinimumHeight(35)
+        
+        self.metadata_layout.addWidget(self.up_axis_label)
+        self.metadata_layout.addWidget(self.up_axis_combo)
+        self.metadata_layout.addSpacing(20)
+        self.metadata_layout.addWidget(self.meters_label)
+        self.metadata_layout.addWidget(self.meters_input)
+        self.metadata_layout.addStretch()
+        
+        self.top_layout.addLayout(self.metadata_layout)
+        self.layout.addWidget(self.top_container)
 
         # Slots Configuration Section
         self.slots_container = QFrame()
@@ -52,7 +78,7 @@ class SettingsPage(QWidget):
         self.slots_table.setHorizontalHeaderLabels(["Slot Name", "Composition Type"])
         self.slots_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.slots_table.setMinimumHeight(200)
-        self.slots_table.setObjectName("Outliner") # Reuse styling
+        self.slots_table.setObjectName("Outliner")
 
         self.btn_layout = QHBoxLayout()
         self.add_slot_btn = QPushButton("Add Slot")
@@ -74,16 +100,13 @@ class SettingsPage(QWidget):
         self.layout.addWidget(self.slots_container)
 
         self.layout.addStretch()
-
         self.load_config()
 
     def add_slot_row(self, name="", slot_type="payload"):
         row = self.slots_table.rowCount()
         self.slots_table.insertRow(row)
-        
         name_item = QTableWidgetItem(name)
         self.slots_table.setItem(row, 0, name_item)
-        
         type_combo = QComboBox()
         type_combo.addItems(["payload", "sublayer"])
         type_combo.setCurrentText(slot_type)
@@ -106,9 +129,11 @@ class SettingsPage(QWidget):
                 with open(self.config_path, 'r') as f:
                     config = json.load(f)
                     self.path_input.setText(config.get("library_path", default_path))
+                    self.up_axis_combo.setCurrentText(config.get("up_axis", "Y"))
+                    self.meters_input.setValue(config.get("meters_per_unit", 1.0))
+                    
                     slots = config.get("slots", default_slots)
                     for s in slots:
-                        # Handle backward compatibility if slots was just a list of strings
                         if isinstance(s, str):
                             self.add_slot_row(s, "payload")
                         else:
@@ -121,16 +146,22 @@ class SettingsPage(QWidget):
 
     def _load_defaults(self, path, slots):
         self.path_input.setText(path)
+        self.up_axis_combo.setCurrentText("Y")
+        self.meters_input.setValue(1.0)
         for s in slots:
             self.add_slot_row(s["name"], s["type"])
 
     def save_config(self):
         path = self.path_input.text()
         slots = self.get_slots()
+        up_axis = self.up_axis_combo.currentText()
+        meters = self.meters_input.value()
         try:
             with open(self.config_path, 'w') as f:
                 json.dump({
                     "library_path": path,
+                    "up_axis": up_axis,
+                    "meters_per_unit": meters,
                     "slots": slots
                 }, f, indent=4)
         except Exception as e:
@@ -150,6 +181,12 @@ class SettingsPage(QWidget):
 
     def get_library_path(self):
         return self.path_input.text()
+
+    def get_up_axis(self):
+        return self.up_axis_combo.currentText()
+    
+    def get_meters_per_unit(self):
+        return self.meters_input.value()
 
     def get_slots(self):
         slots = []
