@@ -564,7 +564,7 @@ class PublishPage(QWidget):
                             font = other_item.font(0)
                             font.setBold(True)
                             other_item.setFont(0, font)
-                            other_item.setBackground(0, QColor(0, 255, 153, 40)) # Soft green highlight
+                            other_item.setBackground(0, QColor(0, 122, 204, 60)) # Soft blue highlight
                 
                 mtl_layer = self.slot_index_layers.get("Materials")
                 self.prop_editor.load_prim(prim, edit_layer=mtl_layer)
