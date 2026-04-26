@@ -96,19 +96,21 @@ class MaterialPropertyEditor(QScrollArea):
                 self.layout.addRow(shader_input.GetBaseName(), widget)
 
     def _create_input_widget(self, shader_input):
-        # Check for existing texture connection via sources
+        # Check for existing texture connection via sources safely
         sources = shader_input.GetConnectedSources()
         if sources:
-            source_info = sources[0]
-            src_prim = source_info.source.GetPrim()
-            if src_prim.IsA(UsdShade.Shader):
-                src_shader = UsdShade.Shader(src_prim)
-                shader_id = str(src_shader.GetIdAttr().Get())
-                if shader_id.startswith("ND_image"):
-                    file_input = src_shader.GetInput("file")
-                    if not file_input:
-                        file_input = src_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
-                    return self._create_texture_picker(file_input)
+            for source_info in sources:
+                source = source_info.source
+                if not source: continue
+                src_prim = source.GetPrim()
+                if src_prim.IsA(UsdShade.Shader):
+                    src_shader = UsdShade.Shader(src_prim)
+                    shader_id = str(src_shader.GetIdAttr().Get())
+                    if shader_id.startswith("ND_image"):
+                        file_input = src_shader.GetInput("file")
+                        if not file_input:
+                            file_input = src_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
+                        return self._create_texture_picker(file_input)
 
         # Standard value widget with "T" button
         container = QWidget()
