@@ -77,13 +77,12 @@ class MaterialPropertyEditor(QScrollArea):
     def load_prim(self, prim):
         self.clear_editor()
         if not prim: return
-        self.current_prim = prim
+        if not prim.IsA(UsdShade.Material): return
+
+        self.current_prim = UsdShade.Material(prim)
         
         # Get inputs directly from the prim (Material or Shader)
-        connectable = UsdShade.ConnectableAPI(prim)
-        if not connectable: return
-
-        inputs = sorted(connectable.GetInputs(), key=lambda x: x.GetBaseName())
+        inputs = self.current_prim.GetInputs()
         if not inputs:
             label = QLabel("No authored inputs found.")
             label.setStyleSheet("color: #888; font-style: italic;")
@@ -99,9 +98,11 @@ class MaterialPropertyEditor(QScrollArea):
         # Check for existing texture connection via sources safely
         sources = shader_input.GetConnectedSources()
         if sources:
-            for source_info in sources:
-                source = source_info.source
+            for info in sources:
+                # ConnectionSourceInfo has a 'source' attribute (ConnectableAPI)
+                source = info.source if hasattr(info, 'source') else info[0]
                 if not source: continue
+                
                 src_prim = source.GetPrim()
                 if src_prim.IsA(UsdShade.Shader):
                     src_shader = UsdShade.Shader(src_prim)
