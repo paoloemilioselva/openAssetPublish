@@ -53,7 +53,7 @@ STANDARD_SURFACE_CHANNELS = [
 ]
 
 class MaterialPropertyEditor(QScrollArea):
-    """Dynamically generates UI for USD Material/Shader inputs with Texture support."""
+    """Simple UI for authored inputs on the selected Material or Shader prim."""
     value_changed = Signal()
 
     def __init__(self):
@@ -79,17 +79,13 @@ class MaterialPropertyEditor(QScrollArea):
         if not prim: return
         self.current_prim = prim
         
-        # Use ConnectableAPI to handle both Materials and Shaders
+        # Get inputs directly from the prim (Material or Shader)
         connectable = UsdShade.ConnectableAPI(prim)
-        if not connectable:
-            label = QLabel("Selected prim is not connectable.")
-            label.setStyleSheet("color: #888; font-style: italic;")
-            self.layout.addRow(label)
-            return
+        if not connectable: return
 
         inputs = sorted(connectable.GetInputs(), key=lambda x: x.GetBaseName())
         if not inputs:
-            label = QLabel("No inputs found on this prim.")
+            label = QLabel("No authored inputs found.")
             label.setStyleSheet("color: #888; font-style: italic;")
             self.layout.addRow(label)
             return
@@ -100,14 +96,15 @@ class MaterialPropertyEditor(QScrollArea):
                 self.layout.addRow(shader_input.GetBaseName(), widget)
 
     def _create_input_widget(self, shader_input):
-        # Check for existing texture connection
+        # Check for existing texture connection via sources
         sources = shader_input.GetConnectedSources()
         if sources:
-            source, _, _ = sources[0]
-            src_prim = source.GetPrim()
+            source_info = sources[0]
+            src_prim = source_info.source.GetPrim()
             if src_prim.IsA(UsdShade.Shader):
                 src_shader = UsdShade.Shader(src_prim)
-                if str(src_shader.GetIdAttr().Get()).startswith("ND_image"):
+                shader_id = str(src_shader.GetIdAttr().Get())
+                if shader_id.startswith("ND_image"):
                     file_input = src_shader.GetInput("file")
                     if not file_input:
                         file_input = src_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
@@ -172,6 +169,7 @@ class MaterialPropertyEditor(QScrollArea):
 
     def _convert_to_texture(self, shader_input):
         prim = shader_input.GetPrim()
+        # Find material parent to house the texture shader
         material_prim = prim if prim.IsA(UsdShade.Material) else prim.GetParent()
         if not material_prim.IsA(UsdShade.Material): return
         
@@ -183,7 +181,6 @@ class MaterialPropertyEditor(QScrollArea):
         tex_id = f"ND_image_{tex_type_suffix}"
         
         with Sdf.ChangeBlock():
-            # Create texture shader
             tex_path = material_prim.GetPath().AppendChild(f"tex_{input_name}")
             tex_shader = UsdShade.Shader.Define(stage, tex_path)
             tex_shader.CreateIdAttr(tex_id)
@@ -192,16 +189,6 @@ class MaterialPropertyEditor(QScrollArea):
             
             # Connect the selected input to the texture output
             shader_input.ConnectToSource(tex_out)
-            
-            # If we are on a Material, also connect the underlying shader input to bypass the interface
-            if prim.IsA(UsdShade.Material):
-                surface_out = UsdShade.Material(prim).GetSurfaceOutput("mtlx")
-                if surface_out:
-                    sources = surface_out.GetConnectedSources()
-                    if sources:
-                        shader_prim = sources[0][0].GetPrim()
-                        shd_in = UsdShade.Shader(shader_prim).GetInput(input_name)
-                        if shd_in: shd_in.ConnectToSource(tex_out)
             
         self.value_changed.emit()
         self.load_prim(prim)
@@ -473,7 +460,6 @@ class PublishPage(QWidget):
         if self.stage:
             prim = self.stage.GetPrimAtPath(prim_path)
             if prim:
-                print(f"DEBUG: Selected Prim: {prim_path} ({prim.GetTypeName()})")
                 self.prop_editor.load_prim(prim)
             else:
                 self.prop_editor.clear_editor()
