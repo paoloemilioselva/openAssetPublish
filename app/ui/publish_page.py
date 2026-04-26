@@ -397,11 +397,28 @@ class PublishPage(QWidget):
         self._create_new_stage()
 
     def _parse_obj(self, file_path):
-        """Simple OBJ parser to create a USD Mesh when native support is missing."""
+        """Simple OBJ parser to create a USD Mesh with direct vertex transformation."""
         vertices = []
         face_indices = []
         face_counts = []
         
+        # Get transformation settings
+        obj_settings = {"rotation": [0,0,0], "scale": 1.0}
+        if self.settings:
+            obj_settings = self.settings.get_obj_import_settings()
+        
+        rot_values = obj_settings["rotation"]
+        scale_mult = obj_settings["scale"]
+        
+        # Pre-compute rotation matrix using Gf
+        rot_matrix = Gf.Matrix4d(1).SetRotate(
+            Gf.Rotation(Gf.Vec3d(1,0,0), rot_values[0]) *
+            Gf.Rotation(Gf.Vec3d(0,1,0), rot_values[1]) *
+            Gf.Rotation(Gf.Vec3d(0,0,1), rot_values[2])
+        )
+        # Add scaling to the matrix
+        rot_matrix.SetScale(Gf.Vec3d(scale_mult, scale_mult, scale_mult))
+
         try:
             with open(file_path, 'r') as f:
                 for line in f:
@@ -411,20 +428,19 @@ class PublishPage(QWidget):
                     
                     parts = line.split()
                     if parts[0] == 'v':
-                        # Vertex: v x y z
-                        vertices.append(Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3])))
+                        # Raw vertex position
+                        p = Gf.Point3d(float(parts[1]), float(parts[2]), float(parts[3]))
+                        # Direct transformation
+                        p_transformed = rot_matrix.Transform(p)
+                        vertices.append(Gf.Vec3f(p_transformed))
                     elif parts[0] == 'f':
-                        # Face: f v1/vt1/vn1 v2/vt2/vn2 ...
                         face_v_indices = []
                         for p in parts[1:]:
-                            # OBJ is 1-based, USD is 0-based. Only take the vertex index part.
                             v_idx = int(p.split('/')[0])
                             face_v_indices.append(v_idx - 1)
-                        
                         face_counts.append(len(face_v_indices))
                         face_indices.extend(face_v_indices)
             
-            # Create a temporary stage and mesh
             temp_stage = Usd.Stage.CreateInMemory()
             UsdGeom.Xform.Define(temp_stage, "/main")
             mesh = UsdGeom.Mesh.Define(temp_stage, "/main/mesh")
@@ -432,7 +448,6 @@ class PublishPage(QWidget):
             mesh.CreateFaceVertexIndicesAttr(face_indices)
             mesh.CreateFaceVertexCountsAttr(face_counts)
             
-            # Set default prim for flattening
             temp_stage.SetDefaultPrim(temp_stage.GetPrimAtPath("/main"))
             return UsdUtils.FlattenLayerStack(temp_stage)
             

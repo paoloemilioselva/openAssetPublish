@@ -63,9 +63,49 @@ class SettingsPage(QWidget):
         self.metadata_layout.addWidget(self.meters_label)
         self.metadata_layout.addWidget(self.meters_input)
         self.metadata_layout.addStretch()
-        
         self.top_layout.addLayout(self.metadata_layout)
         self.layout.addWidget(self.top_container)
+
+        # OBJ Import Section
+        self.obj_container = QFrame()
+        self.obj_container.setObjectName("PublishPanel")
+        self.obj_layout = QVBoxLayout(self.obj_container)
+        self.obj_layout.setContentsMargins(15, 15, 15, 15)
+        self.obj_layout.setSpacing(10)
+        
+        self.obj_title = QLabel("OBJ Import Defaults")
+        self.obj_title.setStyleSheet("font-weight: bold;")
+        
+        self.obj_controls_layout = QHBoxLayout()
+        
+        # Rotation
+        self.rot_label = QLabel("Rotation (X, Y, Z)")
+        self.rot_x = QDoubleSpinBox()
+        self.rot_y = QDoubleSpinBox()
+        self.rot_z = QDoubleSpinBox()
+        for sb in [self.rot_x, self.rot_y, self.rot_z]:
+            sb.setRange(-360.0, 360.0)
+            sb.setMinimumHeight(30)
+            
+        # Scale
+        self.scale_label = QLabel("Scale Multiplier")
+        self.scale_input = QDoubleSpinBox()
+        self.scale_input.setRange(0.0001, 10000.0)
+        self.scale_input.setValue(1.0)
+        self.scale_input.setMinimumHeight(30)
+        
+        self.obj_controls_layout.addWidget(self.rot_label)
+        self.obj_controls_layout.addWidget(self.rot_x)
+        self.obj_controls_layout.addWidget(self.rot_y)
+        self.obj_controls_layout.addWidget(self.rot_z)
+        self.obj_controls_layout.addSpacing(20)
+        self.obj_controls_layout.addWidget(self.scale_label)
+        self.obj_controls_layout.addWidget(self.scale_input)
+        self.obj_controls_layout.addStretch()
+        
+        self.obj_layout.addWidget(self.obj_title)
+        self.obj_layout.addLayout(self.obj_controls_layout)
+        self.layout.addWidget(self.obj_container)
 
         # Slots Configuration Section
         self.slots_container = QFrame()
@@ -132,6 +172,13 @@ class SettingsPage(QWidget):
                     self.up_axis_combo.setCurrentText(config.get("up_axis", "Y"))
                     self.meters_input.setValue(config.get("meters_per_unit", 1.0))
                     
+                    obj_settings = config.get("obj_import", {})
+                    rot = obj_settings.get("rotation", [0.0, 0.0, 0.0])
+                    self.rot_x.setValue(rot[0])
+                    self.rot_y.setValue(rot[1])
+                    self.rot_z.setValue(rot[2])
+                    self.scale_input.setValue(obj_settings.get("scale", 1.0))
+                    
                     slots = config.get("slots", default_slots)
                     for s in slots:
                         if isinstance(s, str):
@@ -148,6 +195,10 @@ class SettingsPage(QWidget):
         self.path_input.setText(path)
         self.up_axis_combo.setCurrentText("Y")
         self.meters_input.setValue(1.0)
+        self.rot_x.setValue(0.0)
+        self.rot_y.setValue(0.0)
+        self.rot_z.setValue(0.0)
+        self.scale_input.setValue(1.0)
         for s in slots:
             self.add_slot_row(s["name"], s["type"])
 
@@ -156,12 +207,17 @@ class SettingsPage(QWidget):
         slots = self.get_slots()
         up_axis = self.up_axis_combo.currentText()
         meters = self.meters_input.value()
+        obj_settings = {
+            "rotation": [self.rot_x.value(), self.rot_y.value(), self.rot_z.value()],
+            "scale": self.scale_input.value()
+        }
         try:
             with open(self.config_path, 'w') as f:
                 json.dump({
                     "library_path": path,
                     "up_axis": up_axis,
                     "meters_per_unit": meters,
+                    "obj_import": obj_settings,
                     "slots": slots
                 }, f, indent=4)
         except Exception as e:
@@ -187,6 +243,12 @@ class SettingsPage(QWidget):
     
     def get_meters_per_unit(self):
         return self.meters_input.value()
+    
+    def get_obj_import_settings(self):
+        return {
+            "rotation": [self.rot_x.value(), self.rot_y.value(), self.rot_z.value()],
+            "scale": self.scale_input.value()
+        }
 
     def get_slots(self):
         slots = []
