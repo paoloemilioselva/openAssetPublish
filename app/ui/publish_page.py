@@ -459,9 +459,6 @@ class PublishPage(QWidget):
         self.outliner.blockSignals(True)
         self.outliner.clear()
         if self.stage:
-            # Force the stage to re-compose by reloading the root layer
-            self.stage.GetRootLayer().Reload()
-            
             # Start traversal from the main prim
             main_prim = self.stage.GetPrimAtPath("/main")
             if main_prim:
