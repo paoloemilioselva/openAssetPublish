@@ -25,7 +25,7 @@ SET PXR_PLUGINPATH_NAME=%USDROOT%;%USDROOT%\plugin\usd
 SET PYTHONPATH=%USDROOT%\lib\python;%PYTHONPATH%
 
 SET PATH=%USDROOT%\bin;%RMANTREE%\bin;%PATH%
-SET PATH=%USDROOT%\lib;%PATH%
+SET PATH=%USDROOT%\lib;%RMANTREE%\lib;%PATH%
 
 :: Now launch the app
 python main.py
