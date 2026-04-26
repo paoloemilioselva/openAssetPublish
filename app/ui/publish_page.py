@@ -443,6 +443,14 @@ class PublishPage(QWidget):
             
             temp_stage = Usd.Stage.CreateInMemory()
             UsdGeom.Xform.Define(temp_stage, "/main")
+
+            # Apply Stage Metadata from Settings
+            if self.settings:
+                up_axis = self.settings.get_up_axis()
+                meters = self.settings.get_meters_per_unit()
+                UsdGeom.SetStageUpAxis(temp_stage, up_axis)
+                UsdGeom.SetStageMetersPerUnit(temp_stage, meters)
+
             mesh = UsdGeom.Mesh.Define(temp_stage, "/main/mesh")
             mesh.CreatePointsAttr(vertices)
             mesh.CreateFaceVertexIndicesAttr(face_indices)
