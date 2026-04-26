@@ -429,7 +429,7 @@ class PublishPage(QWidget):
                     parts = line.split()
                     if parts[0] == 'v':
                         # Raw vertex position
-                        p = Gf.Point3d(float(parts[1]), float(parts[2]), float(parts[3]))
+                        p = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
                         # Direct transformation
                         p_transformed = rot_matrix.Transform(p)
                         vertices.append(Gf.Vec3f(p_transformed))
