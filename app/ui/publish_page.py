@@ -349,18 +349,21 @@ class PublishPage(QWidget):
                     material = UsdShade.Material.Define(self.stage, mtl_path)
                     shd_path = mtl_path.AppendChild("shader")
                     shader = UsdShade.Shader.Define(self.stage, shd_path)
-                    shader.CreateIdAttr("ND_standard_surface_surfaceshader")
+                    # Surface Output connection
                     material.CreateSurfaceOutput("mtlx").ConnectToSource(shader.ConnectableAPI(), "surface")
 
-                    registry = Sdr.Registry()
-                    node = registry.GetShaderNodeByIdentifier("ND_standard_surface_surfaceshader")
-                    if node:
-                        for input_name in node.GetInputNames():
-                            prop = node.GetInput(input_name)
-                            sdf_type, _ = prop.GetTypeAsSdfType()
-                            mtl_in = material.CreateInput(input_name, sdf_type)
-                            shd_in = shader.CreateInput(input_name, sdf_type)
-                            shd_in.ConnectToSource(mtl_in)
+                    try:
+                        registry = Sdr.Registry()
+                        node = registry.GetShaderNodeByIdentifier("ND_standard_surface_surfaceshader")
+                        if node:
+                            for input_name in node.GetInputNames():
+                                prop = node.GetInput(input_name)
+                                sdf_type, _ = prop.GetTypeAsSdfType()
+                                mtl_in = material.CreateInput(input_name, sdf_type)
+                                shd_in = shader.CreateInput(input_name, sdf_type)
+                                shd_in.ConnectToSource(mtl_in)
+                    except Exception as e:
+                        print(f"DEBUG: Sdr discovery failed (likely missing plugins): {e}")
         self.refresh_outliner()
 
     def _on_selection_changed(self):
