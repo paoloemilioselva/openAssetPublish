@@ -139,3 +139,21 @@ QPushButton#PublishButton:hover {
 QPushButton#PublishButton:pressed {
     background-color: #005c99;
 }
+
+/* Preview Button styling */
+QPushButton#PreviewButton {
+    background-color: #e67e22;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+QPushButton#PreviewButton:hover {
+    background-color: #d35400;
+}
+
+QPushButton#PreviewButton:pressed {
+    background-color: #a04000;
+}
