@@ -402,7 +402,6 @@ class PublishPage(QWidget):
         face_indices = []
         face_counts = []
         
-        # Get transformation settings
         obj_settings = {"rotation": [0,0,0], "scale": 1.0}
         if self.settings:
             obj_settings = self.settings.get_obj_import_settings()
@@ -410,13 +409,11 @@ class PublishPage(QWidget):
         rot_values = obj_settings["rotation"]
         scale_mult = obj_settings["scale"]
         
-        # Pre-compute rotation matrix using Gf
         rot_matrix = Gf.Matrix4d(1).SetRotate(
             Gf.Rotation(Gf.Vec3d(1,0,0), rot_values[0]) *
             Gf.Rotation(Gf.Vec3d(0,1,0), rot_values[1]) *
             Gf.Rotation(Gf.Vec3d(0,0,1), rot_values[2])
         )
-        # Add scaling to the matrix
         rot_matrix.SetScale(Gf.Vec3d(scale_mult, scale_mult, scale_mult))
 
         try:
@@ -428,9 +425,7 @@ class PublishPage(QWidget):
                     
                     parts = line.split()
                     if parts[0] == 'v':
-                        # Raw vertex position
                         p = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
-                        # Direct transformation
                         p_transformed = rot_matrix.Transform(p)
                         vertices.append(Gf.Vec3f(p_transformed))
                     elif parts[0] == 'f':
@@ -444,7 +439,6 @@ class PublishPage(QWidget):
             temp_stage = Usd.Stage.CreateInMemory()
             UsdGeom.Xform.Define(temp_stage, "/main")
 
-            # Apply Stage Metadata from Settings
             if self.settings:
                 up_axis = self.settings.get_up_axis()
                 meters = self.settings.get_meters_per_unit()
@@ -473,6 +467,15 @@ class PublishPage(QWidget):
             if is_obj:
                 print(f"DEBUG: Parsing OBJ file: {file_path}")
                 source_layer = self._parse_obj(file_path)
+                
+                # Handle Preview after Import
+                if self.settings and source_layer:
+                    obj_settings = self.settings.get_obj_import_settings()
+                    if obj_settings.get("preview", True):
+                        temp_preview_path = os.path.join(os.environ.get("TEMP", os.getcwd()), "obj_import_preview.usda")
+                        source_layer.Export(temp_preview_path)
+                        import subprocess
+                        subprocess.Popen(f'usdview "{temp_preview_path}"', shell=True)
             else:
                 print(f"DEBUG: Opening USD file: {file_path}")
                 source_layer = UsdUtils.FlattenLayerStack(Usd.Stage.Open(file_path))
@@ -503,13 +506,11 @@ class PublishPage(QWidget):
         UsdGeom.Xform.Define(self.stage, "/main")
         self.stage.SetDefaultPrim(self.stage.GetPrimAtPath("/main"))
         
-        # Apply Stage Metadata from Settings
         if self.settings:
             up_axis = self.settings.get_up_axis()
             meters = self.settings.get_meters_per_unit()
             UsdGeom.SetStageUpAxis(self.stage, up_axis)
             UsdGeom.SetStageMetersPerUnit(self.stage, meters)
-            print(f"DEBUG: Stage Metadata - Up Axis: {up_axis}, Meters Per Unit: {meters}")
 
         self.slot_index_layers = {}
         self.slot_payload_layers = {}
@@ -517,21 +518,14 @@ class PublishPage(QWidget):
         for slot in self.drop_slots:
             index_layer = Sdf.Layer.CreateAnonymous(f"{slot.slot_name}/index.usda")
             self.slot_index_layers[slot.slot_name] = index_layer
-
-            # every slot is sublayered
             self.stage.GetRootLayer().subLayerPaths.append(index_layer.identifier)
 
-            # only the payload slot will have a subfolder and sub-file for payload data
             if slot.slot_type == "payload":
                 payload_layer = Sdf.Layer.CreateAnonymous(f"{slot.slot_name}/payload.usd")
                 self.slot_payload_layers[slot.slot_name] = payload_layer
-                # every payload will have a /main prim
                 Sdf.CreatePrimInLayer(payload_layer, "/main")
                 payload_layer.defaultPrim = "main"
-                
-                # send edit to a specific layer
                 with Usd.EditContext(self.stage, index_layer):
-                    # Payload main -> index layer
                     scope_prim = self.stage.DefinePrim(f"/main/{slot.slot_name}", "Scope")
                     scope_prim.GetPayloads().AddPayload(Sdf.Payload(payload_layer.identifier, "/main"))
 
@@ -554,10 +548,7 @@ class PublishPage(QWidget):
         if self.stage:
             main_prim = self.stage.GetPrimAtPath("/main")
             if main_prim:
-                print(f"DEBUG: Found main prim, starting traversal. Children: {len(main_prim.GetChildren())}")
                 self._add_prim_to_tree(main_prim, self.outliner)
-            else:
-                print("DEBUG: Main prim not found in stage!")
         self.outliner.blockSignals(False)
 
     def _add_prim_to_tree(self, prim, parent_item):

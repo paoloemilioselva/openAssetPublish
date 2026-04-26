@@ -3,7 +3,7 @@ import json
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QPushButton, 
     QFileDialog, QFrame, QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
-    QDoubleSpinBox
+    QDoubleSpinBox, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -93,6 +93,10 @@ class SettingsPage(QWidget):
         self.scale_input.setRange(0.0001, 10000.0)
         self.scale_input.setValue(1.0)
         self.scale_input.setMinimumHeight(30)
+
+        # Preview Toggle
+        self.preview_cb = QCheckBox("Preview in usdview after Import")
+        self.preview_cb.setMinimumHeight(30)
         
         self.obj_controls_layout.addWidget(self.rot_label)
         self.obj_controls_layout.addWidget(self.rot_x)
@@ -105,6 +109,7 @@ class SettingsPage(QWidget):
         
         self.obj_layout.addWidget(self.obj_title)
         self.obj_layout.addLayout(self.obj_controls_layout)
+        self.obj_layout.addWidget(self.preview_cb)
         self.layout.addWidget(self.obj_container)
 
         # Slots Configuration Section
@@ -178,6 +183,7 @@ class SettingsPage(QWidget):
                     self.rot_y.setValue(rot[1])
                     self.rot_z.setValue(rot[2])
                     self.scale_input.setValue(obj_settings.get("scale", 1.0))
+                    self.preview_cb.setChecked(obj_settings.get("preview", True))
                     
                     slots = config.get("slots", default_slots)
                     for s in slots:
@@ -199,6 +205,7 @@ class SettingsPage(QWidget):
         self.rot_y.setValue(0.0)
         self.rot_z.setValue(0.0)
         self.scale_input.setValue(1.0)
+        self.preview_cb.setChecked(True)
         for s in slots:
             self.add_slot_row(s["name"], s["type"])
 
@@ -209,7 +216,8 @@ class SettingsPage(QWidget):
         meters = self.meters_input.value()
         obj_settings = {
             "rotation": [self.rot_x.value(), self.rot_y.value(), self.rot_z.value()],
-            "scale": self.scale_input.value()
+            "scale": self.scale_input.value(),
+            "preview": self.preview_cb.isChecked()
         }
         try:
             with open(self.config_path, 'w') as f:
@@ -247,7 +255,8 @@ class SettingsPage(QWidget):
     def get_obj_import_settings(self):
         return {
             "rotation": [self.rot_x.value(), self.rot_y.value(), self.rot_z.value()],
-            "scale": self.scale_input.value()
+            "scale": self.scale_input.value(),
+            "preview": self.preview_cb.isChecked()
         }
 
     def get_slots(self):
