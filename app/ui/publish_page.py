@@ -97,17 +97,15 @@ class MaterialPropertyEditor(QScrollArea):
     def _create_input_widget(self, shader_input):
         # Check for existing texture connection via sources safely
         try:
-            sources = shader_input.GetConnectedSources()
-            if sources and len(sources) > 0:
+            # GetConnectedSources returns (sourceInfos, invalidSourceInfos)
+            sources, _ = shader_input.GetConnectedSources()
+            if sources:
                 for info in sources:
-                    if info is None: continue
-                    source = info.source if hasattr(info, 'source') else None
-                    if not source and isinstance(info, (list, tuple)) and len(info) > 0:
-                        source = info[0]
+                    # info is a UsdShade.ConnectionSourceInfo
+                    source_api = info.source # This is a UsdShade.ConnectableAPI
+                    if not source_api: continue
                     
-                    if not source: continue
-                    
-                    src_prim = source.GetPrim()
+                    src_prim = source_api.GetPrim()
                     if src_prim and src_prim.IsA(UsdShade.Shader):
                         src_shader = UsdShade.Shader(src_prim)
                         shader_id_attr = src_shader.GetIdAttr()
