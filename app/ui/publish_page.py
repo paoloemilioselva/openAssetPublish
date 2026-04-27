@@ -641,42 +641,53 @@ class PublishPage(QWidget):
                     
                     if cmd == 'newmtl':
                         current_mtl = parts[1]
-                        materials[current_mtl] = {}
+                        materials[current_mtl] = {'props': {}, 'is_transmissive': False}
                     elif current_mtl:
+                        props = materials[current_mtl]['props']
                         if cmd == 'kd': # Diffuse -> base_color
-                            materials[current_mtl]['base_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
+                            props['base_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
                         elif cmd == 'ks': # Specular -> specular_color
-                            materials[current_mtl]['specular_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
+                            props['specular_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
                         elif cmd == 'ns': # Shininess -> specular_roughness
-                            # Mapping: roughness = sqrt(2 / (Ns + 2))
                             import math
                             ns = float(parts[1])
                             roughness = math.sqrt(2.0 / (ns + 2.0))
-                            materials[current_mtl]['specular_roughness'] = max(0.0, min(1.0, roughness))
+                            props['specular_roughness'] = max(0.0, min(1.0, roughness))
                         elif cmd in ['d', 'tr']: # Dissolve / Transparency -> opacity
                             val = float(parts[1])
                             opacity = val if cmd == 'd' else 1.0 - val
-                            materials[current_mtl]['opacity'] = Gf.Vec3f(opacity, opacity, opacity)
+                            # Only set if not opaque to avoid polluting
+                            if opacity < 0.999:
+                                props['opacity'] = Gf.Vec3f(opacity, opacity, opacity)
                         elif cmd == 'tf': # Transmission filter -> transmission_color
-                            materials[current_mtl]['transmission_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
-                            materials[current_mtl]['transmission'] = 1.0 # Hint that it's transmissive
-                        elif cmd == 'ka': # Ambient -> emission_color (fallback)
-                            materials[current_mtl]['emission_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
+                            props['transmission_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
+                        elif cmd == 'illum':
+                            illum = int(parts[1])
+                            # 4, 6, 7, 9 are transmissive modes in MTL
+                            if illum in [4, 6, 7, 9]:
+                                materials[current_mtl]['is_transmissive'] = True
+                        elif cmd == 'ka': # Ambient -> emission_color
+                            props['emission_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
+                
+                # Apply transmission hint
+                for m_data in materials.values():
+                    if m_data['is_transmissive']:
+                        m_data['props']['transmission'] = 1.0
+                    # Clean up hint
+                    del m_data['is_transmissive']
         except Exception as e:
             print(f"DEBUG: Error parsing MTL {mtl_path}: {e}")
             
         return materials
 
     def _parse_obj(self, file_path):
-        """Simple OBJ parser supporting groups, direct vertex transformation, and MTL materials."""
+        """Simple OBJ parser returning (flattened_geometry_layer, material_data)."""
         vertices = []
         obj_normals = []
         current_group = "default"
         current_mtl_name = None
         mtl_lib_file = None
         
-        # Structure: {group_name: {mtl_name: {indices: [], counts: [], normals: []}}}
-        # This handles multiple materials per group by splitting them into sub-meshes
         groups = {}
         
         obj_settings = {"rotation": [0,0,0], "scale": 1.0, "recalc_normals": False}
@@ -740,48 +751,20 @@ class PublishPage(QWidget):
                 UsdGeom.SetStageUpAxis(temp_stage, self.settings.get_up_axis())
                 UsdGeom.SetStageMetersPerUnit(temp_stage, self.settings.get_meters_per_unit())
 
-            # Parse Materials if mtllib was found
-            mtl_data = {}
-            if mtl_lib_file:
-                mtl_path = os.path.join(os.path.dirname(file_path), mtl_lib_file)
-                mtl_data = self._parse_mtl(mtl_path)
-            
-            # Create Materials in USD
-            usd_materials = {}
-            if mtl_data:
-                mtl_scope = temp_stage.DefinePrim("/main/Materials", "Scope")
-                for mtl_name, props in mtl_data.items():
-                    mtl_path = f"/main/Materials/{Tf.MakeValidIdentifier(mtl_name)}"
-                    material = UsdShade.Material.Define(temp_stage, mtl_path)
-                    shader = UsdShade.Shader.Define(temp_stage, f"{mtl_path}/shader")
-                    shader.CreateIdAttr("ND_standard_surface_surfaceshader")
-                    material.CreateSurfaceOutput(renderContext="mtlx").ConnectToSource(shader.CreateOutput("surface", Sdf.ValueTypeNames.Token))
-                    
-                    # Apply mapped properties
-                    for prop_name, value in props.items():
-                        # Determine type name from value
-                        v_type = Sdf.ValueTypeNames.Color3f
-                        if isinstance(value, float): v_type = Sdf.ValueTypeNames.Float
-                        
-                        mtl_in = material.CreateInput(prop_name, v_type)
-                        mtl_in.Set(value)
-                        shd_in = shader.CreateInput(prop_name, v_type)
-                        shd_in.ConnectToSource(mtl_in)
-                    
-                    usd_materials[mtl_name] = material
-
             subdiv_scheme = "catmullClark"
             if self.settings:
                 if not self.settings.get_obj_import_settings().get("subdivision", False):
                     subdiv_scheme = "none"
 
+            mesh_mtl_bindings = {} # mesh_path: mtl_name
+
             for group_name, mtl_groups in groups.items():
                 for mtl_name, g_data in mtl_groups.items():
                     if not g_data["indices"]: continue
                     
-                    # Create a unique name for each group-material combination
                     mesh_name = f"{group_name}_{Tf.MakeValidIdentifier(str(mtl_name))}" if mtl_name else group_name
-                    mesh = UsdGeom.Mesh.Define(temp_stage, f"/main/{mesh_name}")
+                    mesh_path = f"/main/{mesh_name}"
+                    mesh = UsdGeom.Mesh.Define(temp_stage, mesh_path)
                     mesh.CreatePointsAttr(vertices)
                     mesh.CreateFaceVertexIndicesAttr(g_data["indices"])
                     mesh.CreateFaceVertexCountsAttr(g_data["counts"])
@@ -800,12 +783,17 @@ class PublishPage(QWidget):
                         mesh.CreateNormalsAttr(obj_normals)
                         mesh.SetNormalsInterpolation(UsdGeom.Tokens.varying)
                     
-                    # Bind Material if it exists
-                    if mtl_name in usd_materials:
-                        UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(usd_materials[mtl_name])
+                    if mtl_name:
+                        mesh_mtl_bindings[mesh_path] = mtl_name
 
             temp_stage.SetDefaultPrim(temp_stage.GetPrimAtPath("/main"))
-            return UsdUtils.FlattenLayerStack(temp_stage)
+            
+            mtl_data = {}
+            if mtl_lib_file:
+                mtl_path = os.path.join(os.path.dirname(file_path), mtl_lib_file)
+                mtl_data = self._parse_mtl(mtl_path)
+
+            return UsdUtils.FlattenLayerStack(temp_stage), mtl_data, mesh_mtl_bindings
         except Exception as e:
             raise e
 
@@ -813,15 +801,17 @@ class PublishPage(QWidget):
         slot = self.sender()
         if not slot: return
         is_obj = file_path.lower().endswith(".obj")
+        
         try:
+            mtl_data = {}
+            mesh_mtl_bindings = {}
             if is_obj:
-                source_layer = self._parse_obj(file_path)
+                source_layer, mtl_data, mesh_mtl_bindings = self._parse_obj(file_path)
                 if self.settings and source_layer:
                     obj_settings = self.settings.get_obj_import_settings()
                     if obj_settings.get("preview", True):
                         temp_preview_path = os.path.join(os.environ.get("TEMP", os.getcwd()), "obj_preview.usda")
                         source_layer.Export(temp_preview_path)
-                        import subprocess
                         subprocess.Popen(f'usdview "{temp_preview_path}"', shell=True)
             else:
                 source_layer = UsdUtils.FlattenLayerStack(Usd.Stage.Open(file_path))
@@ -831,6 +821,8 @@ class PublishPage(QWidget):
             return
 
         if not source_layer: return
+        
+        # 1. Author Geometry
         if slot.slot_type == "payload":
             payload_layer = self.slot_payload_layers.get(slot.slot_name)
             if payload_layer:
@@ -843,6 +835,41 @@ class PublishPage(QWidget):
                 with Sdf.ChangeBlock():
                     index_layer.Clear()
                     index_layer.TransferContent(source_layer)
+
+        # 2. Author Materials in the Materials layer
+        if mtl_data:
+            mtl_slot_layer = self.slot_index_layers.get("Materials")
+            if mtl_slot_layer:
+                with Usd.EditContext(self.stage, mtl_slot_layer):
+                    # Ensure Materials scope exists
+                    UsdGeom.Scope.Define(self.stage, "/main/Materials")
+                    for mtl_name, m_data in mtl_data.items():
+                        mtl_path = Sdf.Path(f"/main/Materials/{Tf.MakeValidIdentifier(mtl_name)}")
+                        material = UsdShade.Material.Define(self.stage, mtl_path)
+                        shader = UsdShade.Shader.Define(self.stage, mtl_path.AppendChild("shader"))
+                        shader.CreateIdAttr("ND_standard_surface_surfaceshader")
+                        material.CreateSurfaceOutput(renderContext="mtlx").ConnectToSource(shader.CreateOutput("surface", Sdf.ValueTypeNames.Token))
+                        
+                        props = m_data['props']
+                        for p_name, p_val in props.items():
+                            v_type = Sdf.ValueTypeNames.Color3f
+                            if isinstance(p_val, float): v_type = Sdf.ValueTypeNames.Float
+                            
+                            mtl_in = material.CreateInput(p_name, v_type)
+                            mtl_in.Set(p_val)
+                            shd_in = shader.CreateInput(p_name, v_type)
+                            shd_in.ConnectToSource(mtl_in)
+
+        # 3. Author Bindings in the Bindings layer
+        if mesh_mtl_bindings:
+            bind_slot_layer = self.slot_index_layers.get("Bindings")
+            if bind_slot_layer:
+                with Usd.EditContext(self.stage, bind_slot_layer):
+                    for mesh_path, mtl_name in mesh_mtl_bindings.items():
+                        mtl_path = f"/main/Materials/{Tf.MakeValidIdentifier(mtl_name)}"
+                        target_prim = self.stage.OverridePrim(mesh_path)
+                        UsdShade.MaterialBindingAPI.Apply(target_prim).Bind(UsdShade.Material(self.stage.GetPrimAtPath(mtl_path)))
+
         self.refresh_outliner()
 
     def _create_new_stage(self):
