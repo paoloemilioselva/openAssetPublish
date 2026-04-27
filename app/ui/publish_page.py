@@ -172,11 +172,7 @@ class MaterialPropertyEditor(QScrollArea):
         return TexturePickerWidget(file_input, self)
 
     def _convert_to_texture(self, shader_input):
-        material_prim = shader_input.GetPrim()
-        if not material_prim.IsA(UsdShade.Material): return
-        material = UsdShade.Material(material_prim)
-        
-        stage = material_prim.GetStage()
+        stage = self.current_prim.GetPrim().GetStage()
         input_name = shader_input.GetBaseName()
         sdf_type = shader_input.GetTypeName()
         
@@ -187,11 +183,10 @@ class MaterialPropertyEditor(QScrollArea):
             try:
                 # 1. Redefine Material input as Asset
                 # Using CreateInput is correct, it will overwrite the type
-                new_input = material.CreateInput(input_name, Sdf.ValueTypeNames.Asset)
-                
+                new_input = self.current_prim.CreateInput(input_name, Sdf.ValueTypeNames.Asset)
                 # 2. Create texture shader
                 safe_name = Tf.MakeValidIdentifier(f"tex_{input_name}")
-                tex_path = material_prim.GetPath().AppendChild(safe_name)
+                tex_path = self.current_prim.GetPrim().GetPath().AppendChild(safe_name)
                 
                 print(f"DEBUG: Authoring texture shader at: {tex_path}")
                 # Use a try-except block because Define can raise Tf.ErrorException
@@ -213,7 +208,7 @@ class MaterialPropertyEditor(QScrollArea):
                 tex_file_in.ConnectToSource(new_input)
                 
                 # 4. Connect internal surface shader to texture output
-                surface_shader_prim = material_prim.GetChild("shader")
+                surface_shader_prim = self.current_prim.GetPrim().GetChild("shader")
                 if surface_shader_prim:
                     surface_shader = UsdShade.Shader(surface_shader_prim)
                     shd_in = surface_shader.GetInput(input_name)
@@ -224,22 +219,23 @@ class MaterialPropertyEditor(QScrollArea):
                 print(f"DEBUG: do_convert failed: {e}")
                 raise e
 
-                if self.edit_layer:
-                with Usd.EditContext(stage, self.edit_layer):
+        if self.edit_layer:
+            with Usd.EditContext(stage, self.edit_layer):
                 do_convert()
-                else:
-                do_convert()
-
-                self.value_changed.emit()
-                self.load_prim(material_prim, edit_layer=self.edit_layer)
+        else:
+            do_convert()
+            
+        self.value_changed.emit()
+        self.load_prim(self.current_prim.GetPrim(), edit_layer=self.edit_layer)
 
     def _open_color_picker(self, shader_input, button):
+        if not self.current_prim: return
         val = shader_input.Get()
         initial = QColor.fromRgbF(val[0], val[1], val[2]) if val else Qt.GlobalColor.white
         color = QColorDialog.getColor(initial, self, "Select Color")
         if color.isValid():
             button.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
-            stage = shader_input.GetPrim().GetStage()
+            stage = self.current_prim.GetPrim().GetStage()
             if self.edit_layer:
                 with Usd.EditContext(stage, self.edit_layer):
                     shader_input.Set(Gf.Vec3f(color.redF(), color.greenF(), color.blueF()))
@@ -248,7 +244,8 @@ class MaterialPropertyEditor(QScrollArea):
             self.value_changed.emit()
 
     def _update_asset_path(self, shader_input, text):
-        stage = shader_input.GetPrim().GetStage()
+        if not self.current_prim: return
+        stage = self.current_prim.GetPrim().GetStage()
         if self.edit_layer:
             with Usd.EditContext(stage, self.edit_layer):
                 shader_input.Set(Sdf.AssetPath(text))
@@ -263,7 +260,8 @@ class MaterialPropertyEditor(QScrollArea):
             self._update_asset_path(shader_input, path)
 
     def _update_float(self, shader_input, value):
-        stage = shader_input.GetPrim().GetStage()
+        if not self.current_prim: return
+        stage = self.current_prim.GetPrim().GetStage()
         if self.edit_layer:
             with Usd.EditContext(stage, self.edit_layer):
                 shader_input.Set(float(value))
