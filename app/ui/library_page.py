@@ -1,9 +1,11 @@
 import os
+import shutil
 import subprocess
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from app.ui.flow_layout import FlowLayout
 
 class AssetCard(QFrame):
@@ -15,6 +17,7 @@ class AssetCard(QFrame):
         self.setFixedSize(180, 220)
         self.asset_path = asset_path
         self.name = name
+        self.setAcceptDrops(True)
         
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(10, 10, 10, 10)
@@ -25,7 +28,9 @@ class AssetCard(QFrame):
         self.preview.setObjectName("AssetPreview")
         self.preview.setFixedSize(160, 140)
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setText("PREVIEW")
+        
+        # Look for existing preview
+        self.update_preview_from_folder()
         
         # Title
         self.title = QLabel(name)
@@ -35,6 +40,56 @@ class AssetCard(QFrame):
 
         self.layout.addWidget(self.preview)
         self.layout.addWidget(self.title)
+
+    def update_preview_from_folder(self):
+        found = False
+        for ext in [".png", ".jpg", ".jpeg", ".webp"]:
+            preview_path = os.path.join(self.asset_path, f"preview{ext}")
+            if os.path.exists(preview_path):
+                pixmap = QPixmap(preview_path)
+                if not pixmap.isNull():
+                    self.preview.setPixmap(pixmap.scaled(
+                        self.preview.size(), 
+                        Qt.AspectRatioMode.KeepAspectRatio, 
+                        Qt.TransformationMode.SmoothTransformation
+                    ))
+                    self.preview.setText("")
+                    found = True
+                    break
+        if not found:
+            self.preview.setText("PREVIEW")
+            self.preview.setPixmap(QPixmap())
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            # Check if any URL is an image
+            for url in event.mimeData().urls():
+                path = url.toLocalFile()
+                if path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if urls:
+            image_path = urls[0].toLocalFile()
+            ext = os.path.splitext(image_path)[1].lower()
+            if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                # Save to asset folder
+                target_path = os.path.join(self.asset_path, f"preview{ext}")
+                try:
+                    # Remove other preview extensions first to avoid multiple previews
+                    for other_ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                        other_path = os.path.join(self.asset_path, f"preview{other_ext}")
+                        if os.path.exists(other_path):
+                            os.remove(other_path)
+                    
+                    shutil.copy2(image_path, target_path)
+                    self.update_preview_from_folder()
+                    event.acceptProposedAction()
+                except Exception as e:
+                    print(f"Failed to save preview: {e}")
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
