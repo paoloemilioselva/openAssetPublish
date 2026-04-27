@@ -632,12 +632,29 @@ class PublishPage(QWidget):
         
         def find_tex(filename):
             if not filename: return None
-            # If it's a full path, just take the base filename
-            base_name = os.path.basename(filename)
+            
+            # 1. Try absolute path as is
+            if os.path.isabs(filename) and os.path.exists(filename):
+                return filename
+
+            # Normalize and prepare relative version (strip drive/leading slash)
+            clean_filename = filename.replace('\\', '/')
+            base_name = os.path.basename(clean_filename)
+            
+            rel_path = clean_filename
+            if ':' in rel_path: rel_path = rel_path.split(':', 1)[-1]
+            rel_path = rel_path.lstrip('/')
+
             # Search in mtl dir and parent dir
             for d in [mtl_dir, parent_dir]:
-                p = os.path.join(d, base_name)
-                if os.path.exists(p): return p
+                # Try concatenated relative path
+                p_full = os.path.normpath(os.path.join(d, rel_path))
+                if os.path.exists(p_full): return p_full
+                
+                # Try basename
+                p_base = os.path.normpath(os.path.join(d, base_name))
+                if os.path.exists(p_base): return p_base
+                
             return None
 
         if not os.path.exists(mtl_path):
