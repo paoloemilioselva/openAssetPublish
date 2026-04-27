@@ -184,6 +184,8 @@ class MaterialPropertyEditor(QScrollArea):
         tex_id = f"ND_image_{tex_type_suffix}"
         
         def do_convert():
+            # Ensure we are defining the shader in the material's layer
+            # even if the stage edit target is different
             # 1. Redefine Material input as Asset
             new_input = material.CreateInput(input_name, Sdf.ValueTypeNames.Asset)
             
