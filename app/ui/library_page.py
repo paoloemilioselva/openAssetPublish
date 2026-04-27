@@ -2,10 +2,11 @@ import os
 import shutil
 import subprocess
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame, QScrollArea
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame, QScrollArea,
+    QApplication
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QKeyEvent
 from app.ui.flow_layout import FlowLayout
 
 class AssetCard(QFrame):
@@ -18,6 +19,7 @@ class AssetCard(QFrame):
         self.asset_path = asset_path
         self.name = name
         self.setAcceptDrops(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(10, 10, 10, 10)
@@ -90,6 +92,49 @@ class AssetCard(QFrame):
                     event.acceptProposedAction()
                 except Exception as e:
                     print(f"Failed to save preview: {e}")
+
+    def mousePressEvent(self, event):
+        self.setFocus()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.matches(QKeyEvent.StandardKey.Paste):
+            clipboard = QApplication.clipboard()
+            mime_data = clipboard.mimeData()
+            
+            if mime_data.hasImage():
+                image = clipboard.image()
+                if not image.isNull():
+                    target_path = os.path.join(self.asset_path, "preview.png")
+                    try:
+                        # Clear existing previews
+                        for ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                            old_path = os.path.join(self.asset_path, f"preview{ext}")
+                            if os.path.exists(old_path):
+                                os.remove(old_path)
+                        
+                        if image.save(target_path, "PNG"):
+                            self.update_preview_from_folder()
+                    except Exception as e:
+                        print(f"Failed to paste preview: {e}")
+            elif mime_data.hasUrls():
+                # Handle file paste if it's an image
+                for url in mime_data.urls():
+                    path = url.toLocalFile()
+                    if path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                        ext = os.path.splitext(path)[1].lower()
+                        target_path = os.path.join(self.asset_path, f"preview{ext}")
+                        try:
+                            for e in [".png", ".jpg", ".jpeg", ".webp"]:
+                                old_p = os.path.join(self.asset_path, f"preview{e}")
+                                if os.path.exists(old_p): os.remove(old_p)
+                            shutil.copy2(path, target_path)
+                            self.update_preview_from_folder()
+                            break
+                        except Exception as e:
+                            print(f"Failed to paste preview file: {e}")
+        else:
+            super().keyPressEvent(event)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
