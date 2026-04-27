@@ -1042,7 +1042,7 @@ class PublishPage(QWidget):
                     shutil.copytree(tmp_dir, perm_tmp)
                     
                     final_index = os.path.join(perm_tmp, "index.usda")
-                    subprocess.Popen(f'usdview "{final_index}"', shell=True)
+                    subprocess.Popen(f'usdview --renderer "RenderMan RIS" "{final_index}"', shell=True)
             except Exception as e:
                 import traceback; traceback.print_exc()
                 QMessageBox.critical(self, "Preview Error", f"Preview failed: {str(e)}")

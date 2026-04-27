@@ -212,7 +212,7 @@ class LibraryPage(QWidget):
             # but we should handle it carefully.
             try:
                 # Use a string command for better shell interpretation on Windows
-                cmd = f'usdview "{index_path}"'
+                cmd = f'usdview --renderer "RenderMan RIS" "{index_path}"'
                 subprocess.Popen(cmd, shell=True)
             except Exception as e:
                 print(f"Failed to launch usdview: {e}")
