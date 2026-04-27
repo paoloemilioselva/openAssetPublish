@@ -624,10 +624,20 @@ class PublishPage(QWidget):
         self._create_new_stage()
 
     def _parse_mtl(self, mtl_path):
-        """Simple MTL parser mapping to Standard Surface parameters."""
+        """Simple MTL parser mapping to Standard Surface parameters, including texture maps."""
         materials = {}
         current_mtl = None
+        mtl_dir = os.path.dirname(mtl_path)
+        parent_dir = os.path.dirname(mtl_dir)
         
+        def find_tex(filename):
+            if not filename: return None
+            # Search in mtl dir and parent dir
+            for d in [mtl_dir, parent_dir]:
+                p = os.path.join(d, filename)
+                if os.path.exists(p): return p
+            return None
+
         if not os.path.exists(mtl_path):
             return materials
 
@@ -641,9 +651,11 @@ class PublishPage(QWidget):
                     
                     if cmd == 'newmtl':
                         current_mtl = parts[1]
-                        materials[current_mtl] = {'props': {}, 'is_transmissive': False}
+                        materials[current_mtl] = {'props': {}, 'maps': {}, 'is_transmissive': False}
                     elif current_mtl:
                         props = materials[current_mtl]['props']
+                        maps = materials[current_mtl]['maps']
+                        
                         if cmd == 'kd': # Diffuse -> base_color
                             props['base_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
                         elif cmd == 'ks': # Specular -> specular_color
@@ -656,24 +668,38 @@ class PublishPage(QWidget):
                         elif cmd in ['d', 'tr']: # Dissolve / Transparency -> opacity
                             val = float(parts[1])
                             opacity = val if cmd == 'd' else 1.0 - val
-                            # Only set if not opaque to avoid polluting
                             if opacity < 0.999:
                                 props['opacity'] = Gf.Vec3f(opacity, opacity, opacity)
                         elif cmd == 'tf': # Transmission filter -> transmission_color
                             props['transmission_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
                         elif cmd == 'illum':
                             illum = int(parts[1])
-                            # 4, 6, 7, 9 are transmissive modes in MTL
                             if illum in [4, 6, 7, 9]:
                                 materials[current_mtl]['is_transmissive'] = True
                         elif cmd == 'ka': # Ambient -> emission_color
                             props['emission_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
-                
+                        
+                        # Texture Maps
+                        elif cmd == 'map_kd':
+                            tex = find_tex(parts[-1])
+                            if tex: maps['base_color'] = tex
+                        elif cmd == 'map_ks':
+                            tex = find_tex(parts[-1])
+                            if tex: maps['specular_color'] = tex
+                        elif cmd == 'map_ns':
+                            tex = find_tex(parts[-1])
+                            if tex: maps['specular_roughness'] = tex
+                        elif cmd == 'map_d':
+                            tex = find_tex(parts[-1])
+                            if tex: maps['opacity'] = tex
+                        elif cmd in ['map_bump', 'bump']:
+                            tex = find_tex(parts[-1])
+                            if tex: maps['coat_normal'] = tex
+
                 # Apply transmission hint
                 for m_data in materials.values():
                     if m_data['is_transmissive']:
                         m_data['props']['transmission'] = 1.0
-                    # Clean up hint
                     del m_data['is_transmissive']
         except Exception as e:
             print(f"DEBUG: Error parsing MTL {mtl_path}: {e}")
@@ -851,7 +877,12 @@ class PublishPage(QWidget):
                         material.CreateSurfaceOutput(renderContext="mtlx").ConnectToSource(shader.CreateOutput("surface", Sdf.ValueTypeNames.Token))
                         
                         props = m_data['props']
+                        maps = m_data['maps']
+                        
                         for p_name, p_val in props.items():
+                            # If there's a texture map for this property, skip setting constant value
+                            if p_name in maps: continue
+                            
                             v_type = Sdf.ValueTypeNames.Color3f
                             if isinstance(p_val, float): v_type = Sdf.ValueTypeNames.Float
                             
@@ -859,6 +890,31 @@ class PublishPage(QWidget):
                             mtl_in.Set(p_val)
                             shd_in = shader.CreateInput(p_name, v_type)
                             shd_in.ConnectToSource(mtl_in)
+
+                        # Create texture reader shaders for maps
+                        for p_name, tex_path in maps.items():
+                            # Redefine Material input as Asset
+                            mtl_in = material.CreateInput(p_name, Sdf.ValueTypeNames.Asset)
+                            mtl_in.Set(Sdf.AssetPath(tex_path))
+                            
+                            # Determine texture shader ID based on Standard Surface target type
+                            # base_color/specular_color -> Color3, roughness/opacity -> Float
+                            target_type = Sdf.ValueTypeNames.Color3f
+                            tex_id_suffix = "3"
+                            if p_name in ['specular_roughness', 'transmission']:
+                                target_type = Sdf.ValueTypeNames.Float
+                                tex_id_suffix = "float"
+                            
+                            tex_shader_path = mtl_path.AppendChild(Tf.MakeValidIdentifier(f"tex_{p_name}"))
+                            tex_shader = UsdShade.Shader.Define(self.stage, tex_shader_path)
+                            tex_shader.CreateIdAttr(f"ND_image_{tex_id_suffix}")
+                            
+                            tex_file_in = tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
+                            tex_file_in.ConnectToSource(mtl_in)
+                            
+                            tex_out = tex_shader.CreateOutput("out", target_type)
+                            shd_in = shader.CreateInput(p_name, target_type)
+                            shd_in.ConnectToSource(tex_out)
 
         # 3. Author Bindings in the Bindings layer
         if mesh_mtl_bindings:
