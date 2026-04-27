@@ -224,15 +224,14 @@ class MaterialPropertyEditor(QScrollArea):
                 print(f"DEBUG: do_convert failed: {e}")
                 raise e
 
-        with Sdf.ChangeBlock():
-            if self.edit_layer:
+                if self.edit_layer:
                 with Usd.EditContext(stage, self.edit_layer):
-                    do_convert()
-            else:
                 do_convert()
-            
-        self.value_changed.emit()
-        self.load_prim(material_prim, edit_layer=self.edit_layer)
+                else:
+                do_convert()
+
+                self.value_changed.emit()
+                self.load_prim(material_prim, edit_layer=self.edit_layer)
 
     def _open_color_picker(self, shader_input, button):
         val = shader_input.Get()
