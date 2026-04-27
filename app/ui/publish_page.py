@@ -865,10 +865,24 @@ class PublishPage(QWidget):
             bind_slot_layer = self.slot_index_layers.get("Bindings")
             if bind_slot_layer:
                 with Usd.EditContext(self.stage, bind_slot_layer):
-                    for mesh_path, mtl_name in mesh_mtl_bindings.items():
-                        mtl_path = f"/main/Materials/{Tf.MakeValidIdentifier(mtl_name)}"
-                        target_prim = self.stage.OverridePrim(mesh_path)
-                        UsdShade.MaterialBindingAPI.Apply(target_prim).Bind(UsdShade.Material(self.stage.GetPrimAtPath(mtl_path)))
+                    for mesh_path_str, mtl_name in mesh_mtl_bindings.items():
+                        # Adjust mesh path if it's in a payload slot
+                        mesh_path = Sdf.Path(mesh_path_str)
+                        if slot.slot_type == "payload":
+                            # mesh_path is /main/mesh_name, we need /main/SlotName/mesh_name
+                            actual_mesh_path = mesh_path.ReplacePrefix(Sdf.Path("/main"), Sdf.Path(f"/main/{slot.slot_name}"))
+                        else:
+                            actual_mesh_path = mesh_path
+                            
+                        mtl_path = Sdf.Path(f"/main/Materials/{Tf.MakeValidIdentifier(mtl_name)}")
+                        target_prim = self.stage.OverridePrim(actual_mesh_path)
+                        
+                        # Bind the material
+                        mtl_prim = self.stage.GetPrimAtPath(mtl_path)
+                        if mtl_prim:
+                            UsdShade.MaterialBindingAPI.Apply(target_prim).Bind(UsdShade.Material(mtl_prim))
+                        else:
+                            print(f"DEBUG: Could not find material prim at {mtl_path} for binding")
 
         self.refresh_outliner()
 
