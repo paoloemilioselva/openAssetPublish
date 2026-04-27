@@ -6,11 +6,12 @@ from PySide6.QtWidgets import (
     QApplication
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap, QKeyEvent
+from PySide6.QtGui import QPixmap, QKeyEvent, QKeySequence
 from app.ui.flow_layout import FlowLayout
 
 class AssetCard(QFrame):
     clicked = Signal(str) # Emits asset path
+    selected = Signal(object) # Emits self
 
     def __init__(self, name, asset_path):
         super().__init__()
@@ -20,6 +21,7 @@ class AssetCard(QFrame):
         self.name = name
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._is_selected = False
         
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(10, 10, 10, 10)
@@ -95,10 +97,17 @@ class AssetCard(QFrame):
 
     def mousePressEvent(self, event):
         self.setFocus()
+        self.selected.emit(self)
         super().mousePressEvent(event)
 
+    def set_selected(self, selected):
+        self._is_selected = selected
+        self.setProperty("selected", selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
     def keyPressEvent(self, event: QKeyEvent):
-        if event.matches(QKeyEvent.StandardKey.Paste):
+        if event.matches(QKeySequence.StandardKey.Paste):
             clipboard = QApplication.clipboard()
             mime_data = clipboard.mimeData()
             
@@ -186,7 +195,14 @@ class LibraryPage(QWidget):
     def add_asset(self, name, asset_path):
         card = AssetCard(name, asset_path)
         card.clicked.connect(self.launch_usdview)
+        card.selected.connect(self.on_card_selected)
         self.flow_layout.addWidget(card)
+
+    def on_card_selected(self, selected_card):
+        for i in range(self.flow_layout.count()):
+            widget = self.flow_layout.itemAt(i).widget()
+            if isinstance(widget, AssetCard):
+                widget.set_selected(widget == selected_card)
 
     def launch_usdview(self, asset_path):
         index_path = os.path.normpath(os.path.join(asset_path, "index.usda"))
