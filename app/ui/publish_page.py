@@ -185,18 +185,20 @@ class MaterialPropertyEditor(QScrollArea):
         
         def do_convert():
             try:
-                # Ensure we are defining the shader in the material's layer
-                # even if the stage edit target is different
                 # 1. Redefine Material input as Asset
+                # Using CreateInput is correct, it will overwrite the type
                 new_input = material.CreateInput(input_name, Sdf.ValueTypeNames.Asset)
                 
                 # 2. Create texture shader
-                # Ensure child name is a valid identifier (e.g. handle dots or colons in input_name)
                 safe_name = Tf.MakeValidIdentifier(f"tex_{input_name}")
                 tex_path = material_prim.GetPath().AppendChild(safe_name)
                 
-                print(f"DEBUG: Defining texture shader at: {tex_path}")
+                print(f"DEBUG: Authoring texture shader at: {tex_path}")
+                # Use OverridePrim if Define fails, or just use Define if it's new
                 tex_shader = UsdShade.Shader.Define(stage, tex_path)
+                if not tex_shader:
+                    tex_shader = UsdShade.Shader(stage.OverridePrim(tex_path))
+                
                 tex_shader.CreateIdAttr(tex_id)
                 tex_file_in = tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
                 tex_out = tex_shader.CreateOutput("out", sdf_type)
