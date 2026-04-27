@@ -194,10 +194,16 @@ class MaterialPropertyEditor(QScrollArea):
                 tex_path = material_prim.GetPath().AppendChild(safe_name)
                 
                 print(f"DEBUG: Authoring texture shader at: {tex_path}")
-                # Use OverridePrim if Define fails, or just use Define if it's new
-                tex_shader = UsdShade.Shader.Define(stage, tex_path)
-                if not tex_shader:
+                # Use a try-except block because Define can raise Tf.ErrorException
+                # if the prim already exists in a stronger layer or has issues
+                try:
+                    tex_shader = UsdShade.Shader.Define(stage, tex_path)
+                except Exception as e:
+                    print(f"DEBUG: Define failed, trying OverridePrim: {e}")
                     tex_shader = UsdShade.Shader(stage.OverridePrim(tex_path))
+                
+                if not tex_shader:
+                    raise Exception(f"Failed to create shader prim at {tex_path}")
                 
                 tex_shader.CreateIdAttr(tex_id)
                 tex_file_in = tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
