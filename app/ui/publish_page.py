@@ -632,9 +632,11 @@ class PublishPage(QWidget):
         
         def find_tex(filename):
             if not filename: return None
+            # If it's a full path, just take the base filename
+            base_name = os.path.basename(filename)
             # Search in mtl dir and parent dir
             for d in [mtl_dir, parent_dir]:
-                p = os.path.join(d, filename)
+                p = os.path.join(d, base_name)
                 if os.path.exists(p): return p
             return None
 
