@@ -184,28 +184,37 @@ class MaterialPropertyEditor(QScrollArea):
         tex_id = f"ND_image_{tex_type_suffix}"
         
         def do_convert():
-            # Ensure we are defining the shader in the material's layer
-            # even if the stage edit target is different
-            # 1. Redefine Material input as Asset
-            new_input = material.CreateInput(input_name, Sdf.ValueTypeNames.Asset)
-            
-            # 2. Create texture shader
-            tex_path = material_prim.GetPath().AppendChild(f"tex_{input_name}")
-            tex_shader = UsdShade.Shader.Define(stage, tex_path)
-            tex_shader.CreateIdAttr(tex_id)
-            tex_file_in = tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
-            tex_out = tex_shader.CreateOutput("out", sdf_type)
-            
-            # 3. Connect texture shader's file input to Material Input
-            tex_file_in.ConnectToSource(new_input)
-            
-            # 4. Connect internal surface shader to texture output
-            surface_shader_prim = material_prim.GetChild("shader")
-            if surface_shader_prim:
-                surface_shader = UsdShade.Shader(surface_shader_prim)
-                shd_in = surface_shader.GetInput(input_name)
-                if shd_in:
-                    shd_in.ConnectToSource(tex_out)
+            try:
+                # Ensure we are defining the shader in the material's layer
+                # even if the stage edit target is different
+                # 1. Redefine Material input as Asset
+                new_input = material.CreateInput(input_name, Sdf.ValueTypeNames.Asset)
+                
+                # 2. Create texture shader
+                # Ensure child name is a valid identifier (e.g. handle dots or colons in input_name)
+                safe_name = Tf.MakeValidIdentifier(f"tex_{input_name}")
+                tex_path = material_prim.GetPath().AppendChild(safe_name)
+                
+                print(f"DEBUG: Defining texture shader at: {tex_path}")
+                tex_shader = UsdShade.Shader.Define(stage, tex_path)
+                tex_shader.CreateIdAttr(tex_id)
+                tex_file_in = tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset)
+                tex_out = tex_shader.CreateOutput("out", sdf_type)
+                
+                # 3. Connect texture shader's file input to Material Input
+                tex_file_in.ConnectToSource(new_input)
+                
+                # 4. Connect internal surface shader to texture output
+                surface_shader_prim = material_prim.GetChild("shader")
+                if surface_shader_prim:
+                    surface_shader = UsdShade.Shader(surface_shader_prim)
+                    shd_in = surface_shader.GetInput(input_name)
+                    if shd_in:
+                        shd_in.ConnectToSource(tex_out)
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                print(f"DEBUG: do_convert failed: {e}")
+                raise e
 
         with Sdf.ChangeBlock():
             if self.edit_layer:
