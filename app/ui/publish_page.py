@@ -623,12 +623,61 @@ class PublishPage(QWidget):
             self.drop_slots.append(slot)
         self._create_new_stage()
 
+    def _parse_mtl(self, mtl_path):
+        """Simple MTL parser mapping to Standard Surface parameters."""
+        materials = {}
+        current_mtl = None
+        
+        if not os.path.exists(mtl_path):
+            return materials
+
+        try:
+            with open(mtl_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'): continue
+                    parts = line.split()
+                    cmd = parts[0].lower()
+                    
+                    if cmd == 'newmtl':
+                        current_mtl = parts[1]
+                        materials[current_mtl] = {}
+                    elif current_mtl:
+                        if cmd == 'kd': # Diffuse -> base_color
+                            materials[current_mtl]['base_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
+                        elif cmd == 'ks': # Specular -> specular_color
+                            materials[current_mtl]['specular_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
+                        elif cmd == 'ns': # Shininess -> specular_roughness
+                            # Mapping: roughness = sqrt(2 / (Ns + 2))
+                            import math
+                            ns = float(parts[1])
+                            roughness = math.sqrt(2.0 / (ns + 2.0))
+                            materials[current_mtl]['specular_roughness'] = max(0.0, min(1.0, roughness))
+                        elif cmd in ['d', 'tr']: # Dissolve / Transparency -> opacity
+                            val = float(parts[1])
+                            opacity = val if cmd == 'd' else 1.0 - val
+                            materials[current_mtl]['opacity'] = Gf.Vec3f(opacity, opacity, opacity)
+                        elif cmd == 'tf': # Transmission filter -> transmission_color
+                            materials[current_mtl]['transmission_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
+                            materials[current_mtl]['transmission'] = 1.0 # Hint that it's transmissive
+                        elif cmd == 'ka': # Ambient -> emission_color (fallback)
+                            materials[current_mtl]['emission_color'] = Gf.Vec3f(float(parts[1]), float(parts[2]), float(parts[3]))
+        except Exception as e:
+            print(f"DEBUG: Error parsing MTL {mtl_path}: {e}")
+            
+        return materials
+
     def _parse_obj(self, file_path):
-        """Simple OBJ parser supporting groups and direct vertex transformation."""
+        """Simple OBJ parser supporting groups, direct vertex transformation, and MTL materials."""
         vertices = []
         obj_normals = []
         current_group = "default"
-        groups = {current_group: {"indices": [], "counts": [], "normals": []}}
+        current_mtl_name = None
+        mtl_lib_file = None
+        
+        # Structure: {group_name: {mtl_name: {indices: [], counts: [], normals: []}}}
+        # This handles multiple materials per group by splitting them into sub-meshes
+        groups = {}
         
         obj_settings = {"rotation": [0,0,0], "scale": 1.0, "recalc_normals": False}
         if self.settings:
@@ -650,29 +699,40 @@ class PublishPage(QWidget):
                     line = line.strip()
                     if not line or line.startswith('#'): continue
                     parts = line.split()
-                    if parts[0] == 'v':
+                    cmd = parts[0].lower()
+                    
+                    if cmd == 'v':
                         p = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
                         vertices.append(Gf.Vec3f(total_mat.Transform(p)))
-                    elif parts[0] == 'vn':
+                    elif cmd == 'vn':
                         n = Gf.Vec3d(float(parts[1]), float(parts[2]), float(parts[3]))
                         obj_normals.append(Gf.Vec3f(total_mat.TransformDir(n).GetNormalized()))
-                    elif parts[0] == 'g':
+                    elif cmd == 'mtllib':
+                        mtl_lib_file = parts[1]
+                    elif cmd == 'usemtl':
+                        current_mtl_name = parts[1]
+                    elif cmd == 'g':
                         name = parts[1] if len(parts) > 1 else "group"
                         current_group = Tf.MakeValidIdentifier(name)
+                    elif cmd == 'f':
                         if current_group not in groups:
-                            groups[current_group] = {"indices": [], "counts": [], "normals": []}
-                    elif parts[0] == 'f':
+                            groups[current_group] = {}
+                        if current_mtl_name not in groups[current_group]:
+                            groups[current_group][current_mtl_name] = {"indices": [], "counts": [], "normals": []}
+                        
                         face_v_indices = []
                         for p in parts[1:]:
                             v_idx = int(p.split('/')[0])
                             face_v_indices.append(v_idx - 1)
-                        g_data = groups[current_group]
+                        
+                        g_mtl_data = groups[current_group][current_mtl_name]
                         if recalc_normals and len(face_v_indices) >= 3:
                             v0, v1, v2 = vertices[face_v_indices[0]], vertices[face_v_indices[1]], vertices[face_v_indices[2]]
-                            g_data["normals"].append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
+                            g_mtl_data["normals"].append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
+                        
                         face_v_indices.reverse()
-                        g_data["counts"].append(len(face_v_indices))
-                        g_data["indices"].extend(face_v_indices)
+                        g_mtl_data["counts"].append(len(face_v_indices))
+                        g_mtl_data["indices"].extend(face_v_indices)
             
             temp_stage = Usd.Stage.CreateInMemory()
             UsdGeom.Xform.Define(temp_stage, "/main")
@@ -680,30 +740,69 @@ class PublishPage(QWidget):
                 UsdGeom.SetStageUpAxis(temp_stage, self.settings.get_up_axis())
                 UsdGeom.SetStageMetersPerUnit(temp_stage, self.settings.get_meters_per_unit())
 
+            # Parse Materials if mtllib was found
+            mtl_data = {}
+            if mtl_lib_file:
+                mtl_path = os.path.join(os.path.dirname(file_path), mtl_lib_file)
+                mtl_data = self._parse_mtl(mtl_path)
+            
+            # Create Materials in USD
+            usd_materials = {}
+            if mtl_data:
+                mtl_scope = temp_stage.DefinePrim("/main/Materials", "Scope")
+                for mtl_name, props in mtl_data.items():
+                    mtl_path = f"/main/Materials/{Tf.MakeValidIdentifier(mtl_name)}"
+                    material = UsdShade.Material.Define(temp_stage, mtl_path)
+                    shader = UsdShade.Shader.Define(temp_stage, f"{mtl_path}/shader")
+                    shader.CreateIdAttr("ND_standard_surface_surfaceshader")
+                    material.CreateSurfaceOutput(renderContext="mtlx").ConnectToSource(shader.CreateOutput("surface", Sdf.ValueTypeNames.Token))
+                    
+                    # Apply mapped properties
+                    for prop_name, value in props.items():
+                        # Determine type name from value
+                        v_type = Sdf.ValueTypeNames.Color3f
+                        if isinstance(value, float): v_type = Sdf.ValueTypeNames.Float
+                        
+                        mtl_in = material.CreateInput(prop_name, v_type)
+                        mtl_in.Set(value)
+                        shd_in = shader.CreateInput(prop_name, v_type)
+                        shd_in.ConnectToSource(mtl_in)
+                    
+                    usd_materials[mtl_name] = material
+
             subdiv_scheme = "catmullClark"
             if self.settings:
                 if not self.settings.get_obj_import_settings().get("subdivision", False):
                     subdiv_scheme = "none"
 
-            for group_name, g_data in groups.items():
-                if not g_data["indices"]: continue
-                mesh = UsdGeom.Mesh.Define(temp_stage, f"/main/{group_name}")
-                mesh.CreatePointsAttr(vertices)
-                mesh.CreateFaceVertexIndicesAttr(g_data["indices"])
-                mesh.CreateFaceVertexCountsAttr(g_data["counts"])
-                mesh.CreateOrientationAttr(UsdGeom.Tokens.leftHanded)
-                mesh.CreateSubdivisionSchemeAttr(subdiv_scheme)
-                if recalc_normals or not obj_normals:
-                    if not g_data["normals"]:
-                        for i in range(0, len(g_data["indices"]), 3):
-                            if i+2 < len(g_data["indices"]):
-                                v0, v1, v2 = vertices[g_data["indices"][i]], vertices[g_data["indices"][i+1]], vertices[g_data["indices"][i+2]]
-                                g_data["normals"].append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
-                    mesh.CreateNormalsAttr(g_data["normals"])
-                    mesh.SetNormalsInterpolation(UsdGeom.Tokens.uniform)
-                else:
-                    mesh.CreateNormalsAttr(obj_normals)
-                    mesh.SetNormalsInterpolation(UsdGeom.Tokens.varying)
+            for group_name, mtl_groups in groups.items():
+                for mtl_name, g_data in mtl_groups.items():
+                    if not g_data["indices"]: continue
+                    
+                    # Create a unique name for each group-material combination
+                    mesh_name = f"{group_name}_{Tf.MakeValidIdentifier(str(mtl_name))}" if mtl_name else group_name
+                    mesh = UsdGeom.Mesh.Define(temp_stage, f"/main/{mesh_name}")
+                    mesh.CreatePointsAttr(vertices)
+                    mesh.CreateFaceVertexIndicesAttr(g_data["indices"])
+                    mesh.CreateFaceVertexCountsAttr(g_data["counts"])
+                    mesh.CreateOrientationAttr(UsdGeom.Tokens.leftHanded)
+                    mesh.CreateSubdivisionSchemeAttr(subdiv_scheme)
+                    
+                    if recalc_normals or not obj_normals:
+                        if not g_data["normals"]:
+                            for i in range(0, len(g_data["indices"]), 3):
+                                if i+2 < len(g_data["indices"]):
+                                    v0, v1, v2 = vertices[g_data["indices"][i]], vertices[g_data["indices"][i+1]], vertices[g_data["indices"][i+2]]
+                                    g_data["normals"].append(Gf.Cross(v1-v0, v2-v0).GetNormalized())
+                        mesh.CreateNormalsAttr(g_data["normals"])
+                        mesh.SetNormalsInterpolation(UsdGeom.Tokens.uniform)
+                    else:
+                        mesh.CreateNormalsAttr(obj_normals)
+                        mesh.SetNormalsInterpolation(UsdGeom.Tokens.varying)
+                    
+                    # Bind Material if it exists
+                    if mtl_name in usd_materials:
+                        UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(usd_materials[mtl_name])
 
             temp_stage.SetDefaultPrim(temp_stage.GetPrimAtPath("/main"))
             return UsdUtils.FlattenLayerStack(temp_stage)
