@@ -857,7 +857,7 @@ class PublishPage(QWidget):
                     if obj_settings.get("preview", True):
                         temp_preview_path = os.path.join(os.environ.get("TEMP", os.getcwd()), "obj_preview.usda")
                         source_layer.Export(temp_preview_path)
-                        subprocess.Popen(f'usdview "{temp_preview_path}"', shell=True)
+                        subprocess.Popen(f'usdview --renderer "RenderMan RIS" "{temp_preview_path}"', shell=True)
             else:
                 source_layer = UsdUtils.FlattenLayerStack(Usd.Stage.Open(file_path))
         except Exception as e:
