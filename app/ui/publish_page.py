@@ -174,6 +174,7 @@ class MaterialPropertyEditor(QScrollArea):
     def _convert_to_texture(self, shader_input):
         material_prim = shader_input.GetPrim()
         if not material_prim.IsA(UsdShade.Material): return
+        material = UsdShade.Material(material_prim)
         
         stage = material_prim.GetStage()
         input_name = shader_input.GetBaseName()
@@ -182,9 +183,9 @@ class MaterialPropertyEditor(QScrollArea):
         tex_type_suffix = str(sdf_type).replace("3f", "3")
         tex_id = f"ND_image_{tex_type_suffix}"
         
-        with Sdf.ChangeBlock():
+        def do_convert():
             # 1. Redefine Material input as Asset
-            shader_input.SetTypeName(Sdf.ValueTypeNames.Asset)
+            new_input = material.CreateInput(input_name, Sdf.ValueTypeNames.Asset)
             
             # 2. Create texture shader
             tex_path = material_prim.GetPath().AppendChild(f"tex_{input_name}")
@@ -194,7 +195,7 @@ class MaterialPropertyEditor(QScrollArea):
             tex_out = tex_shader.CreateOutput("out", sdf_type)
             
             # 3. Connect texture shader's file input to Material Input
-            tex_file_in.ConnectToSource(shader_input)
+            tex_file_in.ConnectToSource(new_input)
             
             # 4. Connect internal surface shader to texture output
             surface_shader_prim = material_prim.GetChild("shader")
@@ -203,9 +204,16 @@ class MaterialPropertyEditor(QScrollArea):
                 shd_in = surface_shader.GetInput(input_name)
                 if shd_in:
                     shd_in.ConnectToSource(tex_out)
+
+        with Sdf.ChangeBlock():
+            if self.edit_layer:
+                with Usd.EditContext(stage, self.edit_layer):
+                    do_convert()
+            else:
+                do_convert()
             
         self.value_changed.emit()
-        self.load_prim(material_prim)
+        self.load_prim(material_prim, edit_layer=self.edit_layer)
 
     def _open_color_picker(self, shader_input, button):
         val = shader_input.Get()
